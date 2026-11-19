@@ -93,18 +93,40 @@ public struct Txn: Codable, Identifiable, Hashable {
     /// Amount credited to the destination, in `toCurrency`. nil = same as `amountMinor`/`currency`.
     public var toAmountMinor: Int64?
     public var toCurrency: String?
+    // Added in 0.2 (optional for compatibility with saved 0.1 data).
+    /// Label names attached to the transaction.
+    public var labels: [String]?
+    /// "Exclude from Overview": kept in history and balances, left out of income/expense statistics.
+    public var excluded: Bool?
+    /// The recurring rule that produced this transaction, if any.
+    public var recurringID: UUID?
 
     /// Category placeholder used by transfers (they have no category).
     public static let noCategory = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
     public init(id: UUID = UUID(), kind: TxKind, amountMinor: Int64, currency: String, categoryID: UUID,
                 walletID: UUID, date: Date, note: String = "", createdAt: Date = Date(), source: TxSource = .manual,
-                toWalletID: UUID? = nil, toAmountMinor: Int64? = nil, toCurrency: String? = nil) {
+                toWalletID: UUID? = nil, toAmountMinor: Int64? = nil, toCurrency: String? = nil,
+                labels: [String] = [], excluded: Bool = false, recurringID: UUID? = nil) {
         self.id = id; self.kind = kind; self.amountMinor = abs(amountMinor); self.currency = currency.uppercased()
         self.categoryID = categoryID; self.walletID = walletID; self.date = date; self.note = note
         self.createdAt = createdAt; self.source = source
         self.toWalletID = toWalletID; self.toAmountMinor = toAmountMinor.map { abs($0) }; self.toCurrency = toCurrency?.uppercased()
+        self.labels = labels.isEmpty ? nil : labels
+        self.excluded = excluded ? true : nil
+        self.recurringID = recurringID
     }
+
+    public var tags: [String] {
+        get { labels ?? [] }
+        set { labels = newValue.isEmpty ? nil : newValue }
+    }
+    public var isExcluded: Bool {
+        get { excluded ?? false }
+        set { excluded = newValue ? true : nil }
+    }
+    /// Counted in income/expense statistics.
+    public var countsInStats: Bool { !isTransfer && !isExcluded }
 
     /// Creates a transfer between two wallets. Pass `toAmountMinor`/`toCurrency` when the currencies differ.
     public static func transfer(from: UUID, to: UUID, amountMinor: Int64, currency: String, toAmountMinor: Int64? = nil,
@@ -190,16 +212,69 @@ public struct AppSettings: Codable, Hashable {
 }
 
 /// The whole persisted state. Value type: snapshots make undo trivial and saves atomic.
+public struct TxLabel: Codable, Identifiable, Hashable {
+    public var id: UUID
+    public var name: String
+    public var sortOrder: Int
+    public init(id: UUID = UUID(), name: String, sortOrder: Int = 0) {
+        self.id = id; self.name = name; self.sortOrder = sortOrder
+    }
+}
+
+public enum Frequency: String, Codable, CaseIterable, Hashable {
+    case daily, weekly, monthly, yearly
+}
+
+/// A repeating transaction: `template` is copied on each due date.
+public struct RecurringRule: Codable, Identifiable, Hashable {
+    public var id: UUID
+    public var template: Txn
+    public var frequency: Frequency
+    /// Next date a transaction will be created.
+    public var nextDate: Date
+    public var endDate: Date?
+    public var isActive: Bool
+    public init(id: UUID = UUID(), template: Txn, frequency: Frequency, nextDate: Date, endDate: Date? = nil, isActive: Bool = true) {
+        self.id = id; self.template = template; self.frequency = frequency; self.nextDate = nextDate
+        self.endDate = endDate; self.isActive = isActive
+    }
+}
+
 public struct AppData: Codable, Hashable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
     public var version: Int = AppData.currentVersion
     public var categories: [Category] = []
     public var wallets: [Wallet] = []
     public var transactions: [Txn] = []
     public var settings = AppSettings()
+    public var labels: [TxLabel] = []
+    public var recurring: [RecurringRule] = []
 
     public init(categories: [Category] = [], wallets: [Wallet] = [], transactions: [Txn] = [], settings: AppSettings = AppSettings()) {
         self.categories = categories; self.wallets = wallets; self.transactions = transactions; self.settings = settings
+    }
+
+    private enum CodingKeys: String, CodingKey { case version, categories, wallets, transactions, settings, labels, recurring }
+
+    /// Tolerant decoding: fields added in later versions may be missing in older files.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        categories = try c.decodeIfPresent([Category].self, forKey: .categories) ?? []
+        wallets = try c.decodeIfPresent([Wallet].self, forKey: .wallets) ?? []
+        transactions = try c.decodeIfPresent([Txn].self, forKey: .transactions) ?? []
+        settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
+        labels = try c.decodeIfPresent([TxLabel].self, forKey: .labels) ?? []
+        recurring = try c.decodeIfPresent([RecurringRule].self, forKey: .recurring) ?? []
+    }
+
+    public var sortedLabels: [TxLabel] {
+        labels.sorted { $0.sortOrder == $1.sortOrder ? $0.name < $1.name : $0.sortOrder < $1.sortOrder }
+    }
+
+    public func labelNamed(_ name: String) -> TxLabel? {
+        let key = TextNorm.normalize(name)
+        return labels.first { TextNorm.normalize($0.name) == key }
     }
 
     // MARK: Lookups

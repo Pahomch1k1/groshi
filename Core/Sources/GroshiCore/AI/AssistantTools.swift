@@ -31,7 +31,8 @@ public enum AssistantTools {
             "wallet": str("Exact wallet name. Omit for the default wallet."),
             "date": str("YYYY-MM-DD in the user's local time. Omit for today."),
             "time": str("HH:mm, optional."),
-            "note": str("Short comment, e.g. the place or purpose. Optional.")
+            "note": str("Short comment, e.g. the place or purpose. Optional."),
+            "labels": ["type": "array", "items": ["type": "string"], "description": "Existing label names to attach (optional)."]
         ],
         "required": ["kind", "amount", "category"],
         "additionalProperties": false
@@ -90,6 +91,7 @@ public enum AssistantTools {
         let exp = data.categories(of: .expense).map { $0.name }.joined(separator: ", ")
         let inc = data.categories(of: .income).map { $0.name }.joined(separator: ", ")
         let wallets = data.activeWallets.map { "\($0.name) (\($0.currency))" }.joined(separator: ", ")
+        let labelList = data.sortedLabels.map { $0.name }.joined(separator: ", ")
         return """
         You are the assistant inside a personal finance iPhone app. You operate the app through tools; you are not a general chatbot.
         Now: \(df.string(from: now)) (\(cal.timeZone.identifier)). Week starts on Monday.
@@ -97,6 +99,7 @@ public enum AssistantTools {
         Expense categories: \(exp).
         Income categories: \(inc).
         Wallets: \(wallets).
+        Labels: \(labelList.isEmpty ? "-" : labelList).
 
         Rules:
         - The user speaks Russian, Ukrainian or English, often by voice (transcripts may contain errors). Reply briefly in \(replyLanguage) unless the user clearly uses another language.

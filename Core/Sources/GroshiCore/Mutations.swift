@@ -34,12 +34,16 @@ public struct TxChanges: Hashable {
     public var walletID: UUID?
     public var date: Date?
     public var note: String?
+    public var labels: [String]?
+    public var excluded: Bool?
     /// For transfers: new destination (replaces destination wallet, amount and currency together).
     public var transfer: TransferTarget?
     public init(kind: TxKind? = nil, amountMinor: Int64? = nil, currency: String? = nil, categoryID: UUID? = nil,
-                walletID: UUID? = nil, date: Date? = nil, note: String? = nil, transfer: TransferTarget? = nil) {
+                walletID: UUID? = nil, date: Date? = nil, note: String? = nil, transfer: TransferTarget? = nil,
+                labels: [String]? = nil, excluded: Bool? = nil) {
         self.kind = kind; self.amountMinor = amountMinor; self.currency = currency; self.categoryID = categoryID
         self.walletID = walletID; self.date = date; self.note = note; self.transfer = transfer
+        self.labels = labels; self.excluded = excluded
     }
 }
 
@@ -54,6 +58,10 @@ public enum Mutation: Hashable {
     case upsertWallet(Wallet)
     case deleteWallet(id: UUID, moveTo: UUID?)
     case updateSettings(AppSettings)
+    case upsertLabel(TxLabel)
+    case deleteLabel(id: UUID)
+    case upsertRecurring(RecurringRule)
+    case deleteRecurring(id: UUID)
     case replaceAll(AppData)
     case batch([Mutation])
 
@@ -70,7 +78,7 @@ public enum Mutation: Hashable {
 
     public var isDestructive: Bool {
         switch self {
-        case .deleteTransactions, .deleteCategory, .deleteWallet, .replaceAll: return true
+        case .deleteTransactions, .deleteCategory, .deleteWallet, .deleteLabel, .replaceAll: return true
         case .batch(let list): return list.contains { $0.isDestructive }
         default: return false
         }
@@ -98,6 +106,8 @@ public enum Mutation: Hashable {
                 if let v = ch.walletID { t.walletID = v }
                 if let v = ch.date { t.date = v }
                 if let v = ch.note { t.note = v }
+                if let v = ch.labels { t.tags = v }
+                if let v = ch.excluded { t.isExcluded = v }
                 if let tr = ch.transfer {
                     t.toWalletID = tr.toWalletID; t.toAmountMinor = tr.toAmountMinor; t.toCurrency = tr.toCurrency?.uppercased()
                 }
@@ -181,6 +191,44 @@ public enum Mutation: Hashable {
 
         case .updateSettings(let s):
             data.settings = s
+
+        case .upsertLabel(let l):
+            let name = l.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { throw MutationError.invalid("empty name") }
+            if let other = data.labels.first(where: { $0.id != l.id && TextNorm.normalize($0.name) == TextNorm.normalize(name) }) {
+                throw MutationError.conflict("label exists: \(other.name)")
+            }
+            var ll = l; ll.name = name
+            if let i = data.labels.firstIndex(where: { $0.id == l.id }) {
+                let old = data.labels[i].name
+                data.labels[i] = ll
+                if old != name {
+                    // Rename on every transaction that uses it.
+                    for j in data.transactions.indices where data.transactions[j].tags.contains(old) {
+                        data.transactions[j].tags = data.transactions[j].tags.map { $0 == old ? name : $0 }
+                    }
+                }
+            } else {
+                if ll.sortOrder == 0 { ll.sortOrder = (data.labels.map { $0.sortOrder }.max() ?? 0) + 1 }
+                data.labels.append(ll)
+            }
+
+        case .deleteLabel(let id):
+            guard let l = data.labels.first(where: { $0.id == id }) else { throw MutationError.notFound("label") }
+            data.labels.removeAll { $0.id == id }
+            for j in data.transactions.indices where data.transactions[j].tags.contains(l.name) {
+                data.transactions[j].tags.removeAll { $0 == l.name }
+            }
+
+        case .upsertRecurring(let r):
+            var tpl = r.template
+            try Mutation.validate(&tpl, in: data)
+            var rr = r; rr.template = tpl
+            if let i = data.recurring.firstIndex(where: { $0.id == r.id }) { data.recurring[i] = rr } else { data.recurring.append(rr) }
+
+        case .deleteRecurring(let id):
+            data.recurring.removeAll { $0.id == id }
+            for j in data.transactions.indices where data.transactions[j].recurringID == id { data.transactions[j].recurringID = nil }
 
         case .replaceAll(let d):
             data = d

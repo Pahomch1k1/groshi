@@ -384,7 +384,8 @@ public final class AssistantEngine {
             }
             let date = try txDate(item["date"]?.text, item["time"]?.text)
             txs.append(Txn(kind: kind, amountMinor: abs(minor), currency: cur, categoryID: cat.id, walletID: w.id,
-                           date: date, note: item["note"]?.text ?? "", createdAt: now(), source: .ai))
+                           date: date, note: item["note"]?.text ?? "", createdAt: now(), source: .ai,
+                           labels: (item["labels"]?.array ?? []).compactMap { $0.text.flatMap { data.labelNamed($0)?.name } }))
         }
         let summary = txs.map { describe($0, data) }.joined(separator: "; ")
         let dupes = txs.flatMap { DuplicateCheck.suspects(for: $0, in: data, calendar: calendar, now: now()) }

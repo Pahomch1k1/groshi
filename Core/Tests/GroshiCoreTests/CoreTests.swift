@@ -167,7 +167,10 @@ final class DataTests: XCTestCase {
         let coffee = plan.transactions[0]
         XCTAssertEqual(coffee.kind, .expense)
         XCTAssertEqual(coffee.amountMinor, 12550)
-        XCTAssertEqual(coffee.note, "Coffee #work #trip")
+        XCTAssertEqual(coffee.note, "Coffee")
+        XCTAssertEqual(coffee.tags, ["work", "trip"])
+        XCTAssertEqual(Set(plan.newLabels.map { $0.name }), ["work", "trip"])
+        XCTAssertTrue(plan.isSpendee)
         XCTAssertEqual(plan.transactions[1].kind, .income)
         XCTAssertEqual(plan.transactions[1].amountMinor, 3_000_000)
         var d = data!
