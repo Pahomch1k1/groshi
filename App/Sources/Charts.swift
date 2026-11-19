@@ -104,7 +104,7 @@ struct DonutWithIcons: View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
             let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-            let rOuter = side * 0.30
+            let rOuter = side * 0.27
             let thickness = rOuter * 0.46
             let rIcon = rOuter + 30
             let rText = rOuter + 66

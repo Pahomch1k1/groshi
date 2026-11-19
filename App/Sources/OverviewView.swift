@@ -113,7 +113,7 @@ struct BreakdownCard: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 50)
             } else {
                 DonutWithIcons(slices: slices) { navigate(.category($0)) }
-                    .frame(height: 330)
+                    .frame(height: 350)
                     .padding(.top, 4)
                 legend(shares.prefix(4).map { $0.categoryID })
                     .padding(.top, 2)
