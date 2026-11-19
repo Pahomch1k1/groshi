@@ -133,6 +133,7 @@ public final class AssistantEngine {
         do {
             switch name {
             case "add_transactions": return try addTransactions(a, data, &events)
+            case "add_transfer": return try addTransfer(a, data, &events)
             case "find_transactions": return findTransactions(a, data)
             case "update_transactions": return try updateTransactions(a, data, &events)
             case "delete_transactions":
@@ -304,17 +305,62 @@ public final class AssistantEngine {
 
     func describe(_ t: Txn, _ data: AppData) -> String {
         let f = DateFormatter.ymd(calendar)
-        return "\(f.string(from: t.date)) \(t.kind == .expense ? "-" : "+")\(MoneyMath.plainString(t.amountMinor, currency: t.currency)) \(t.currency) \(data.category(t.categoryID)?.name ?? "?")"
-            + (t.note.isEmpty ? "" : " (\(t.note))")
+        let note = t.note.isEmpty ? "" : " (\(t.note))"
+        if t.isTransfer {
+            let to = t.toWalletID.flatMap { data.wallet($0)?.name } ?? "?"
+            var s = "\(f.string(from: t.date)) transfer \(MoneyMath.plainString(t.amountMinor, currency: t.currency)) \(t.currency) \(data.wallet(t.walletID)?.name ?? "?") → \(to)"
+            if t.creditedCurrency != t.currency { s += " (+\(MoneyMath.plainString(t.creditedMinor, currency: t.creditedCurrency)) \(t.creditedCurrency))" }
+            return s + note
+        }
+        return "\(f.string(from: t.date)) \(t.kind == .expense ? "-" : "+")\(MoneyMath.plainString(t.amountMinor, currency: t.currency)) \(t.currency) \(data.category(t.categoryID)?.name ?? "?")" + note
     }
 
     func json(_ t: Txn, _ data: AppData) -> JSON {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = calendar.timeZone; f.dateFormat = "yyyy-MM-dd HH:mm"
-        return ["id": .string(shortID(t.id)), "date": .string(f.string(from: t.date)), "kind": .string(t.kind.rawValue),
-                "amount": .string(MoneyMath.plainString(t.amountMinor, currency: t.currency)), "currency": .string(t.currency),
-                "category": .string(data.category(t.categoryID)?.name ?? ""), "wallet": .string(data.wallet(t.walletID)?.name ?? ""),
-                "note": .string(t.note)]
+        var o: [String: JSON] = [
+            "id": .string(shortID(t.id)), "date": .string(f.string(from: t.date)), "kind": .string(t.kind.rawValue),
+            "amount": .string(MoneyMath.plainString(t.amountMinor, currency: t.currency)), "currency": .string(t.currency),
+            "wallet": .string(data.wallet(t.walletID)?.name ?? ""), "note": .string(t.note)
+        ]
+        if t.isTransfer {
+            o["to_wallet"] = .string(t.toWalletID.flatMap { data.wallet($0)?.name } ?? "")
+            if t.creditedCurrency != t.currency {
+                o["to_amount"] = .string(MoneyMath.plainString(t.creditedMinor, currency: t.creditedCurrency))
+                o["to_currency"] = .string(t.creditedCurrency)
+            }
+        } else {
+            o["category"] = .string(data.category(t.categoryID)?.name ?? "")
+        }
+        return .object(o)
+    }
+
+    func addTransfer(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
+        let names = data.activeWallets.map { $0.name }.joined(separator: ", ")
+        guard let fn = a["from_wallet"]?.text, let from = data.walletNamed(fn) else { return error("source wallet not found; wallets: \(names)") }
+        guard let tn = a["to_wallet"]?.text, let to = data.walletNamed(tn) else { return error("destination wallet not found; wallets: \(names). Offer to create it with create_wallet.") }
+        guard from.id != to.id else { return error("source and destination are the same wallet") }
+        let cur = (a["currency"]?.text ?? from.currency).uppercased()
+        guard let amountText = a["amount"]?.text, let minor = MoneyMath.parseMinor(amountText, currency: cur), minor != 0 else {
+            return error("amount missing or invalid; ask the user")
+        }
+        var toMinor: Int64? = nil
+        if to.currency != cur {
+            if let t = a["to_amount"]?.text {
+                guard let v = MoneyMath.parseMinor(t, currency: to.currency), v != 0 else { return error("bad to_amount") }
+                toMinor = abs(v)
+            } else if let v = data.settings.converter.convert(abs(minor), from: cur, to: to.currency) {
+                toMinor = v
+            } else {
+                return error("no exchange rate \(cur)→\(to.currency); ask the user how much arrived (to_amount)")
+            }
+        }
+        let date = try txDate(a["date"]?.text, a["time"]?.text)
+        let tx = Txn.transfer(from: from.id, to: to.id, amountMinor: abs(minor), currency: cur, toAmountMinor: toMinor,
+                              toCurrency: to.currency, date: date, note: a["note"]?.text ?? "", createdAt: now(), source: .ai)
+        let dupes = DuplicateCheck.suspects(for: tx, in: data, calendar: calendar, now: now())
+        return commit(.addTransactions([tx]), summary: "Transfer: " + describe(tx, data),
+                      needsConfirmation: dupes.isEmpty ? nil : .possibleDuplicate, &events)
     }
 
     // MARK: Tools
@@ -354,7 +400,7 @@ public final class AssistantEngine {
             let ids = Set(data.categories.filter { TextNorm.normalize($0.name).contains(key) }.map { $0.id })
             list = list.filter { ids.contains($0.categoryID) }
         }
-        if let w = a["wallet"]?.text, let wal = data.walletNamed(w) { list = list.filter { $0.walletID == wal.id } }
+        if let w = a["wallet"]?.text, let wal = data.walletNamed(w) { list = list.filter { $0.involves(wallet: wal.id) } }
         if let from = day(a["date_from"]?.text) { list = list.filter { $0.date >= from } }
         if let to = day(a["date_to"]?.text), let end = calendar.date(byAdding: .day, value: 1, to: to) { list = list.filter { $0.date < end } }
         if let t = a["text"]?.text {
@@ -395,6 +441,19 @@ public final class AssistantEngine {
             guard let w = data.walletNamed(wn) else { return error("wallet not found") }
             ch.walletID = w.id; parts.append("wallet → \(w.name)")
         }
+        if let tn = a["to_wallet"]?.text {
+            guard let first = txs.first, first.isTransfer, txs.allSatisfy({ $0.isTransfer }) else { return error("to_wallet applies to transfers only") }
+            guard let w = data.walletNamed(tn) else { return error("destination wallet not found") }
+            let srcCur = ch.currency ?? first.currency
+            var toMinor: Int64? = nil
+            if w.currency != srcCur {
+                if w.currency == first.creditedCurrency { toMinor = first.creditedMinor }
+                else { toMinor = data.settings.converter.convert(ch.amountMinor ?? first.amountMinor, from: srcCur, to: w.currency) }
+                guard toMinor != nil else { return error("no exchange rate \(srcCur)→\(w.currency)") }
+            }
+            ch.transfer = TransferTarget(toWalletID: w.id, toAmountMinor: toMinor, toCurrency: w.currency)
+            parts.append("to wallet → \(w.name)")
+        }
         if let d = a["date"]?.text {
             guard let dd = day(d, timeText: a["time"]?.text) else { return error("bad date") }
             if a["time"]?.text == nil, let first = txs.first {
@@ -433,7 +492,7 @@ public final class AssistantEngine {
         let base = data.settings.baseCurrency
         let tot = Analytics.totals(txs, data: data)
         var result: [String: JSON] = [
-            "status": "ok", "currency": .string(base), "count": .number(Double(txs.count)),
+            "status": "ok", "currency": .string(base), "count": .number(Double(txs.filter { !$0.isTransfer }.count)),
             "total_expense": .string(MoneyMath.plainString(tot.expense, currency: base)),
             "total_income": .string(MoneyMath.plainString(tot.income, currency: base)),
             "net": .string(MoneyMath.plainString(tot.net, currency: base))

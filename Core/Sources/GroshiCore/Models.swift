@@ -3,6 +3,8 @@ import Foundation
 public enum TxKind: String, Codable, CaseIterable, Hashable {
     case expense
     case income
+    /// Money moved between the user's own wallets. Never counted as income or expense.
+    case transfer
 }
 
 public enum TxSource: String, Codable, Hashable {
@@ -85,16 +87,64 @@ public struct Txn: Codable, Identifiable, Hashable {
     public var note: String
     public var createdAt: Date
     public var source: TxSource
+    // Transfers only (optional, so data saved by earlier versions decodes unchanged).
+    /// Destination wallet; `walletID` is the source wallet.
+    public var toWalletID: UUID?
+    /// Amount credited to the destination, in `toCurrency`. nil = same as `amountMinor`/`currency`.
+    public var toAmountMinor: Int64?
+    public var toCurrency: String?
+
+    /// Category placeholder used by transfers (they have no category).
+    public static let noCategory = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
     public init(id: UUID = UUID(), kind: TxKind, amountMinor: Int64, currency: String, categoryID: UUID,
-                walletID: UUID, date: Date, note: String = "", createdAt: Date = Date(), source: TxSource = .manual) {
+                walletID: UUID, date: Date, note: String = "", createdAt: Date = Date(), source: TxSource = .manual,
+                toWalletID: UUID? = nil, toAmountMinor: Int64? = nil, toCurrency: String? = nil) {
         self.id = id; self.kind = kind; self.amountMinor = abs(amountMinor); self.currency = currency.uppercased()
         self.categoryID = categoryID; self.walletID = walletID; self.date = date; self.note = note
         self.createdAt = createdAt; self.source = source
+        self.toWalletID = toWalletID; self.toAmountMinor = toAmountMinor.map { abs($0) }; self.toCurrency = toCurrency?.uppercased()
     }
 
-    /// Signed amount: income positive, expense negative.
-    public var signedMinor: Int64 { kind == .income ? amountMinor : -amountMinor }
+    /// Creates a transfer between two wallets. Pass `toAmountMinor`/`toCurrency` when the currencies differ.
+    public static func transfer(from: UUID, to: UUID, amountMinor: Int64, currency: String, toAmountMinor: Int64? = nil,
+                                toCurrency: String? = nil, date: Date, note: String = "", createdAt: Date = Date(),
+                                source: TxSource = .manual) -> Txn {
+        let sameCurrency = toCurrency == nil || toCurrency!.uppercased() == currency.uppercased()
+        return Txn(kind: .transfer, amountMinor: amountMinor, currency: currency, categoryID: noCategory, walletID: from,
+                   date: date, note: note, createdAt: createdAt, source: source, toWalletID: to,
+                   toAmountMinor: sameCurrency ? nil : toAmountMinor, toCurrency: sameCurrency ? nil : toCurrency)
+    }
+
+    public var isTransfer: Bool { kind == .transfer }
+
+    /// Credited amount and currency on the destination side of a transfer.
+    public var creditedMinor: Int64 { toAmountMinor ?? amountMinor }
+    public var creditedCurrency: String { toCurrency ?? currency }
+
+    /// Signed amount for cash flow: income positive, expense negative, transfer 0.
+    public var signedMinor: Int64 {
+        switch kind {
+        case .income: return amountMinor
+        case .expense: return -amountMinor
+        case .transfer: return 0
+        }
+    }
+
+    /// Effect of this transaction on one wallet's balance (in the currency returned).
+    public func balanceEffect(on walletID: UUID) -> (minor: Int64, currency: String)? {
+        switch kind {
+        case .income: return self.walletID == walletID ? (amountMinor, currency) : nil
+        case .expense: return self.walletID == walletID ? (-amountMinor, currency) : nil
+        case .transfer:
+            if self.walletID == walletID && toWalletID == walletID { return nil }
+            if self.walletID == walletID { return (-amountMinor, currency) }
+            if toWalletID == walletID { return (creditedMinor, creditedCurrency) }
+            return nil
+        }
+    }
+
+    public func involves(wallet id: UUID) -> Bool { walletID == id || toWalletID == id }
 }
 
 public enum AppLanguage: String, Codable, CaseIterable {
@@ -187,7 +237,7 @@ public struct AppData: Codable, Hashable {
     /// Balance in the wallet's currency (transactions in other currencies converted).
     public func balance(of wallet: Wallet) -> Int64 {
         let conv = settings.converter
-        let items = transactions.filter { $0.walletID == wallet.id }.map { (minor: $0.signedMinor, currency: $0.currency) }
+        let items = transactions.compactMap { $0.balanceEffect(on: wallet.id) }
         return wallet.initialBalanceMinor + conv.sum(items, into: wallet.currency).total
     }
 }

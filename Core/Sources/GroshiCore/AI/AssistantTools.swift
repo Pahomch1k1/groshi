@@ -40,15 +40,23 @@ public enum AssistantTools {
     public static let all: [JSON] = [
         fn("add_transactions", "Record one or more income/expense transactions. Use one call with several items for several operations.",
            ["items": ["type": "array", "items": txItem]], required: ["items"]),
-        fn("find_transactions", "Search transactions. Returns short ids usable in update/delete. Use for 'last expense', 'yesterday's purchase', etc.",
-           ["kind": kind, "category": str("Category name"), "wallet": str("Wallet name"),
+        fn("add_transfer", "Move money between two of the user's own wallets (withdraw cash from a card, top up savings, move to another account). A transfer is NOT income or expense.",
+           ["from_wallet": str("Source wallet name"), "to_wallet": str("Destination wallet name"),
+            "amount": str("Amount taken from the source wallet, plain decimal string"),
+            "currency": str("ISO code of amount. Omit for the source wallet currency."),
+            "to_amount": str("Amount credited to the destination when its currency differs (e.g. bought USD). Omit to convert at the app's rate."),
+            "date": str("YYYY-MM-DD. Omit for today."), "time": str("HH:mm, optional."), "note": str("Optional comment")],
+           required: ["from_wallet", "to_wallet", "amount"]),
+        fn("find_transactions", "Search transactions (including transfers). Returns short ids usable in update/delete. Use for 'last expense', 'yesterday's purchase', etc.",
+           ["kind": ["type": "string", "enum": ["expense", "income", "transfer"]], "category": str("Category name"), "wallet": str("Wallet name (matches either side of a transfer)"),
             "date_from": str("YYYY-MM-DD inclusive"), "date_to": str("YYYY-MM-DD inclusive"),
             "text": str("Substring of the note"), "min_amount": str("Minimum amount"), "max_amount": str("Maximum amount"),
             "sort": ["type": "string", "enum": ["newest", "oldest", "largest"]],
             "limit": ["type": "integer", "description": "1-50, default 10"]]),
-        fn("update_transactions", "Change fields of transactions found earlier (by id). Only pass fields to change.",
+        fn("update_transactions", "Change fields of transactions found earlier (by id). Only pass fields to change. For transfers: wallet = source, to_wallet = destination.",
            ["ids": ["type": "array", "items": ["type": "string"]], "kind": kind, "amount": str("New amount"),
             "currency": str("ISO code"), "category": str("New category name"), "wallet": str("New wallet name"),
+            "to_wallet": str("Transfers only: new destination wallet"),
             "date": str("YYYY-MM-DD"), "time": str("HH:mm"), "note": str("New note")], required: ["ids"]),
         fn("delete_transactions", "Delete transactions by id.", ["ids": ["type": "array", "items": ["type": "string"]]], required: ["ids"]),
         fn("summarize", "Totals for a date range in the base currency, optionally grouped. Use for questions like 'how much did I spend on X' and for comparisons (call once per period).",
@@ -92,6 +100,7 @@ public enum AssistantTools {
 
         Rules:
         - The user speaks Russian, Ukrainian or English, often by voice (transcripts may contain errors). Reply briefly in \(replyLanguage) unless the user clearly uses another language.
+        - Moving money between the user's own wallets ("снял наличные с карты", "перевёл на копилку", "поменял доллары") is a transfer: use add_transfer, never add_transactions. Transfers do not count as income or expense.
         - To record money use add_transactions; put all operations from one message into a single call. "гривен/грн/₴" = UAH, "баксов/долларов" = USD.
         - Pick the best matching existing category (e.g. restaurant → cafe/restaurants category, petrol → fuel or car). Never invent category names in add_transactions; if nothing fits, use the "other" category of that kind, or ask.
         - If the amount or the direction (income vs expense) is missing or ambiguous, ask one short clarifying question instead of guessing.

@@ -14,6 +14,17 @@ public enum MutationError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+/// Destination side of a transfer.
+public struct TransferTarget: Hashable {
+    public var toWalletID: UUID
+    /// nil = same amount and currency as the source side.
+    public var toAmountMinor: Int64?
+    public var toCurrency: String?
+    public init(toWalletID: UUID, toAmountMinor: Int64? = nil, toCurrency: String? = nil) {
+        self.toWalletID = toWalletID; self.toAmountMinor = toAmountMinor; self.toCurrency = toCurrency
+    }
+}
+
 /// Field changes for one or more transactions. nil = keep.
 public struct TxChanges: Hashable {
     public var kind: TxKind?
@@ -23,10 +34,12 @@ public struct TxChanges: Hashable {
     public var walletID: UUID?
     public var date: Date?
     public var note: String?
+    /// For transfers: new destination (replaces destination wallet, amount and currency together).
+    public var transfer: TransferTarget?
     public init(kind: TxKind? = nil, amountMinor: Int64? = nil, currency: String? = nil, categoryID: UUID? = nil,
-                walletID: UUID? = nil, date: Date? = nil, note: String? = nil) {
+                walletID: UUID? = nil, date: Date? = nil, note: String? = nil, transfer: TransferTarget? = nil) {
         self.kind = kind; self.amountMinor = amountMinor; self.currency = currency; self.categoryID = categoryID
-        self.walletID = walletID; self.date = date; self.note = note
+        self.walletID = walletID; self.date = date; self.note = note; self.transfer = transfer
     }
 }
 
@@ -66,13 +79,13 @@ public enum Mutation: Hashable {
     public func apply(to data: inout AppData) throws {
         switch self {
         case .addTransactions(let txs):
-            for t in txs {
-                guard data.category(t.categoryID) != nil else { throw MutationError.notFound("category") }
-                guard data.wallet(t.walletID) != nil else { throw MutationError.notFound("wallet") }
-                guard t.amountMinor > 0 else { throw MutationError.invalid("amount must be positive") }
+            var normalized: [Txn] = []
+            for var t in txs {
+                try Mutation.validate(&t, in: data)
                 guard !data.transactions.contains(where: { $0.id == t.id }) else { throw MutationError.conflict("duplicate id") }
+                normalized.append(t)
             }
-            data.transactions.append(contentsOf: txs)
+            data.transactions.append(contentsOf: normalized)
 
         case .updateTransactions(let ids, let ch):
             for id in ids {
@@ -81,14 +94,14 @@ public enum Mutation: Hashable {
                 if let v = ch.kind { t.kind = v }
                 if let v = ch.amountMinor { guard v > 0 else { throw MutationError.invalid("amount") }; t.amountMinor = v }
                 if let v = ch.currency { t.currency = v.uppercased() }
-                if let v = ch.categoryID { guard data.category(v) != nil else { throw MutationError.notFound("category") }; t.categoryID = v }
-                if let v = ch.walletID { guard data.wallet(v) != nil else { throw MutationError.notFound("wallet") }; t.walletID = v }
+                if let v = ch.categoryID { t.categoryID = v }
+                if let v = ch.walletID { t.walletID = v }
                 if let v = ch.date { t.date = v }
                 if let v = ch.note { t.note = v }
-                // Category must match the transaction kind.
-                if let c = data.category(t.categoryID), c.kind != t.kind {
-                    throw MutationError.invalid("category kind does not match transaction kind")
+                if let tr = ch.transfer {
+                    t.toWalletID = tr.toWalletID; t.toAmountMinor = tr.toAmountMinor; t.toCurrency = tr.toCurrency?.uppercased()
                 }
+                try Mutation.validate(&t, in: data)
                 data.transactions[i] = t
             }
 
@@ -147,11 +160,16 @@ public enum Mutation: Hashable {
 
         case .deleteWallet(let id, let moveTo):
             guard data.wallet(id) != nil else { throw MutationError.notFound("wallet") }
-            let used = data.transactions.contains { $0.walletID == id }
+            let used = data.transactions.contains { $0.involves(wallet: id) }
             if used {
                 if let target = moveTo {
                     guard data.wallet(target) != nil, target != id else { throw MutationError.invalid("bad target wallet") }
-                    for i in data.transactions.indices where data.transactions[i].walletID == id { data.transactions[i].walletID = target }
+                    for i in data.transactions.indices {
+                        if data.transactions[i].walletID == id { data.transactions[i].walletID = target }
+                        if data.transactions[i].toWalletID == id { data.transactions[i].toWalletID = target }
+                    }
+                    // A transfer between the deleted wallet and the target becomes a self-transfer: drop it.
+                    data.transactions.removeAll { $0.isTransfer && $0.walletID == $0.toWalletID }
                     data.wallets.removeAll { $0.id == id }
                 } else if let i = data.wallets.firstIndex(where: { $0.id == id }) {
                     data.wallets[i].isArchived = true
@@ -175,6 +193,26 @@ public enum Mutation: Hashable {
     }
 }
 
+extension Mutation {
+    /// Checks a transaction against the data and normalizes transfer/category fields.
+    static func validate(_ t: inout Txn, in data: AppData) throws {
+        guard t.amountMinor > 0 else { throw MutationError.invalid("amount must be positive") }
+        guard data.wallet(t.walletID) != nil else { throw MutationError.notFound("wallet") }
+        if t.kind == .transfer {
+            guard let to = t.toWalletID, data.wallet(to) != nil else { throw MutationError.notFound("destination wallet") }
+            guard to != t.walletID else { throw MutationError.invalid("transfer needs two different wallets") }
+            if let a = t.toAmountMinor { guard a > 0 else { throw MutationError.invalid("credited amount must be positive") } }
+            // Same currency on both sides: store a single amount.
+            if t.toCurrency == nil || t.toCurrency == t.currency { t.toCurrency = nil; t.toAmountMinor = nil }
+            t.categoryID = Txn.noCategory
+        } else {
+            guard let c = data.category(t.categoryID) else { throw MutationError.notFound("category") }
+            guard c.kind == t.kind else { throw MutationError.invalid("category kind does not match transaction kind") }
+            t.toWalletID = nil; t.toAmountMinor = nil; t.toCurrency = nil
+        }
+    }
+}
+
 /// Duplicate protection for new transactions.
 public enum DuplicateCheck {
     /// Returns existing transactions that look like the same purchase: same kind, amount, currency, category and day,
@@ -183,7 +221,8 @@ public enum DuplicateCheck {
                                 recentWindow: TimeInterval = 15 * 60) -> [Txn] {
         data.transactions.filter { t in
             t.id != new.id && t.kind == new.kind && t.amountMinor == new.amountMinor && t.currency == new.currency &&
-            t.categoryID == new.categoryID && cal.isDate(t.date, inSameDayAs: new.date) &&
+            t.categoryID == new.categoryID && t.walletID == new.walletID && t.toWalletID == new.toWalletID &&
+            cal.isDate(t.date, inSameDayAs: new.date) &&
             (now.timeIntervalSince(t.createdAt) < recentWindow ||
              (!new.note.isEmpty && TextNorm.normalize(t.note) == TextNorm.normalize(new.note)))
         }

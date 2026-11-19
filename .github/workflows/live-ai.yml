@@ -1,0 +1,27 @@
+name: Live OpenAI test
+
+# Manual only: calls the real OpenAI API (costs a few cents).
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "OpenAI model"
+        default: "gpt-4.1-mini"
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    container: swift:6.0-jammy
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real assistant scenarios
+        working-directory: Core
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ inputs.model }}
+        shell: bash
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then echo "::error::Secret OPENAI_API_KEY is not set"; exit 1; fi
+          swift test --filter LiveOpenAITests 2>&1 | grep -v "^\[" | tail -n 200
+          exit ${PIPESTATUS[0]}

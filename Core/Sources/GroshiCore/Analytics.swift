@@ -51,10 +51,10 @@ public enum Analytics {
             guard period.contains(t.date) else { return false }
             if let k = f.kind, t.kind != k { return false }
             if !f.categoryIDs.isEmpty && !f.categoryIDs.contains(t.categoryID) { return false }
-            if !f.walletIDs.isEmpty && !f.walletIDs.contains(t.walletID) { return false }
+            if !f.walletIDs.isEmpty && !f.walletIDs.contains(t.walletID) && !(t.toWalletID.map { f.walletIDs.contains($0) } ?? false) { return false }
             if !needle.isEmpty {
                 let cat = data.category(t.categoryID)?.name ?? ""
-                let wal = data.wallet(t.walletID)?.name ?? ""
+                let wal = (data.wallet(t.walletID)?.name ?? "") + " " + (t.toWalletID.flatMap { data.wallet($0)?.name } ?? "")
                 let hay = TextNorm.normalize(t.note + " " + cat + " " + wal + " " + MoneyMath.plainString(t.amountMinor, currency: t.currency))
                 if !hay.contains(needle) { return false }
             }
@@ -130,7 +130,11 @@ public enum Analytics {
         for t in txs {
             let key = cal.dateInterval(of: comp, for: t.date)!.start
             var e = map[key] ?? ([], [])
-            if t.kind == .income { e.inc.append((t.amountMinor, t.currency)) } else { e.exp.append((t.amountMinor, t.currency)) }
+            switch t.kind {
+            case .income: e.inc.append((t.amountMinor, t.currency))
+            case .expense: e.exp.append((t.amountMinor, t.currency))
+            case .transfer: break
+            }
             map[key] = e
         }
         // Fill empty buckets for bounded periods so the chart has a stable x-axis.
