@@ -102,10 +102,10 @@ public struct BackupFile: Codable {
 
 extension JSONEncoder.DateEncodingStrategy {
     static var iso8601withFraction: JSONEncoder.DateEncodingStrategy {
-        // Seconds since 1970 as a string: Swift prints the shortest exact Double, so it round-trips, so saved data equals loaded data bit for bit.
+        // "r" + seconds since 2001 (Date's own storage): the shortest exact Double string, so dates round-trip bit for bit.
         .custom { date, encoder in
             var c = encoder.singleValueContainer()
-            try c.encode(String(date.timeIntervalSince1970))
+            try c.encode("r" + String(date.timeIntervalSinceReferenceDate))
         }
     }
 }
@@ -116,7 +116,8 @@ extension JSONDecoder.DateDecodingStrategy {
             let c = try decoder.singleValueContainer()
             if let n = try? c.decode(Double.self) { return Date(timeIntervalSince1970: n) }
             let raw = try c.decode(String.self)
-            if let n = Double(raw) { return Date(timeIntervalSince1970: n) }
+            if raw.hasPrefix("r"), let n = Double(raw.dropFirst()) { return Date(timeIntervalSinceReferenceDate: n) }
+            if let n = Double(raw) { return Date(timeIntervalSince1970: n) } // v0.1.0 files
             let s = raw
             if let d = ISO8601.formatter.date(from: s) ?? ISO8601.plain.date(from: s) { return d }
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "Bad date \(s)")
