@@ -108,7 +108,10 @@ final class GroshiUITests: XCTestCase {
         name.tap(); name.typeText("Кальян")
         shot("08-category-editor")
         app.buttons["category-save"].tap()
-        XCTAssertTrue(app.buttons["Кальян"].waitForExistence(timeout: 5) || app.staticTexts["Кальян"].waitForExistence(timeout: 2))
+        let hookah = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Кальян")).firstMatch
+        let found = hookah.waitForExistence(timeout: 5)
+        shot("08b-categories-list")
+        XCTAssertTrue(found)
         app.navigationBars.buttons.firstMatch.tap()
 
         // Create a wallet
