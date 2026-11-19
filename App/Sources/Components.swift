@@ -132,17 +132,24 @@ struct FAB: View {
     var systemImage: String
     var color: Color = Palette.accent
     var size: CGFloat = 58
+    var onLongPress: (() -> Void)? = nil
     var action: () -> Void
+    @State private var pressed = false
+
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.4, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(color, in: Circle())
-                .shadow(color: color.opacity(0.45), radius: 12, y: 6)
-        }
-        .buttonStyle(PressableStyle(scale: 0.88))
+        Image(systemName: systemImage)
+            .font(.system(size: size * 0.4, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(color, in: Circle())
+            .shadow(color: color.opacity(0.45), radius: 12, y: 6)
+            .scaleEffect(pressed ? 0.88 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: pressed)
+            .contentShape(Circle())
+            .onTapGesture(perform: action)
+            .onLongPressGesture(minimumDuration: 0.45, perform: { onLongPress?() }, onPressingChanged: { pressed = $0 })
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default, action)
     }
 }
 

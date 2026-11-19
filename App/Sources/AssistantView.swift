@@ -381,7 +381,8 @@ struct AISettingsView: View {
     @State private var testResult: String?
 
     static let models = ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-5-mini", "gpt-5"]
-    static let voices = [("ru-RU", "Русский"), ("uk-UA", "Українська"), ("en-US", "English")]
+    static let voices = ["ru-RU", "uk-UA", "en-US"]
+    static let voiceNames = ["ru-RU": "Русский", "uk-UA": "Українська", "en-US": "English"]
 
     var body: some View {
         let ai = store.data.settings.ai
@@ -413,7 +414,7 @@ struct AISettingsView: View {
             } header: { Text(L("Модель")) }
             Section {
                 Picker(L("Язык голоса"), selection: Binding(get: { ai.voiceLocale }, set: { v in store.updateSettings { $0.ai.voiceLocale = v } })) {
-                    ForEach(Self.voices, id: \.0) { Text($0.1).tag($0.0) }
+                    ForEach(Self.voices, id: \.self) { Text(Self.voiceNames[$0] ?? $0).tag($0) }
                 }
                 Toggle(L("Отправлять сразу после записи"), isOn: Binding(get: { ai.autoSendVoice }, set: { v in store.updateSettings { $0.ai.autoSendVoice = v } }))
             } header: { Text(L("Голос")) } footer: {

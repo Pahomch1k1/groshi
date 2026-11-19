@@ -55,14 +55,13 @@ struct RootView: View {
                 HStack(alignment: .bottom) {
                     Spacer()
                     if store.selectedTab == .home || store.selectedTab == .overview {
-                        FAB(systemImage: "plus") {
+                        FAB(systemImage: "plus", onLongPress: {
+                            Haptics.success(enabled: store.data.settings.haptics)
+                            ai.openSheet(context: nil, startVoice: true)
+                        }) {
                             Haptics.tap(enabled: store.data.settings.haptics)
                             showAdd = true
                         }
-                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in
-                            Haptics.success(enabled: store.data.settings.haptics)
-                            ai.openSheet(context: nil, startVoice: true)
-                        })
                         .accessibilityIdentifier("add-button")
                         .transition(.scale.combined(with: .opacity))
                     }

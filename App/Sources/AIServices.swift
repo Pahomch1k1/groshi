@@ -19,7 +19,7 @@ enum Keychain {
         SecItemAdd(add as CFDictionary, nil)
     }
 
-    static func get(account: String = "apiKey") -> String? {
+    static func read(account: String = "apiKey") -> String? {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var out: AnyObject?
@@ -28,7 +28,7 @@ enum Keychain {
         return s.isEmpty ? nil : s
     }
 
-    static var hasKey: Bool { get() != nil }
+    static var hasKey: Bool { read() != nil }
 }
 
 struct AIError: LocalizedError {
@@ -56,7 +56,7 @@ final class OpenAITransport: LLMTransport {
 
     func complete(messages: [ChatMessage], tools: [JSON]) async throws -> ChatMessage {
         let s = settings()
-        let key = Keychain.get()
+        let key = Keychain.read()
         let useProxy = !s.proxyURL.trimmingCharacters(in: .whitespaces).isEmpty
         guard useProxy || key != nil else { throw AIError(message: L("Добавьте ключ OpenAI в «Ещё → AI-ассистент».")) }
         let url = URL(string: useProxy ? s.proxyURL : "https://api.openai.com/v1/chat/completions")!
