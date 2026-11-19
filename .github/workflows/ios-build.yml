@@ -1,0 +1,71 @@
+name: iOS build (IPA + UI tests)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_tests:
+        description: "Run UI tests on the simulator"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen >/dev/null
+          xcodegen generate
+          xcodebuild -version
+
+      - name: Build unsigned IPA
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -project Groshi.xcodeproj -scheme Groshi -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath build/Groshi.xcarchive archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            > build/archive.log 2>&1 || { grep -E "error:|warning: unre" build/archive.log | head -80; tail -40 build/archive.log; exit 1; }
+          mkdir -p build/Payload
+          cp -R build/Groshi.xcarchive/Products/Applications/Groshi.app build/Payload/
+          (cd build && zip -qry Groshi.ipa Payload)
+          ls -la build/Groshi.ipa
+        shell: bash
+
+      - name: UI tests on simulator
+        if: ${{ github.event_name == 'push' || inputs.run_tests }}
+        run: |
+          set -o pipefail
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if x['name'].startswith('iPhone 16') or x['name'].startswith('iPhone 17')))")
+          echo "Simulator $UDID"
+          mkdir -p build/shots
+          export SHOTS_DIR="$PWD/build/shots"
+          TEST_RUNNER_SHOTS_DIR="$SHOTS_DIR" SIMCTL_CHILD_SHOTS_DIR="$SHOTS_DIR" \
+          xcodebuild -project Groshi.xcodeproj -scheme Groshi -destination "id=$UDID" \
+            -resultBundlePath build/UITests.xcresult test > build/test.log 2>&1 || TEST_FAILED=1
+          grep -E "error:|Test Case .*(passed|failed)|XCTAssert|Executed" build/test.log | tail -60
+          cp /tmp/groshi-shots/*.png build/shots/ 2>/dev/null || true
+          ls build/shots || true
+          if [ "$TEST_FAILED" = "1" ]; then tail -60 build/test.log; exit 1; fi
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Groshi-ipa
+          path: build/Groshi.ipa
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-and-logs
+          path: |
+            build/shots
+            build/*.log
+          if-no-files-found: ignore

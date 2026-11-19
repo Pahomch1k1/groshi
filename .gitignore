@@ -8,3 +8,4 @@ build/
 *.ipa
 .secrets/
 .env
+App/Info.plist
