@@ -287,6 +287,7 @@ struct TransactionRow: View {
         .padding(.vertical, 10).padding(.horizontal, 14)
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 

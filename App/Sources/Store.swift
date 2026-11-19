@@ -33,7 +33,10 @@ final class Store {
         try? FileManager.default.createDirectory(at: iconsDirectory, withIntermediateDirectories: true)
 
         let isUITest = ProcessInfo.processInfo.arguments.contains("-uiTestReset")
-        if isUITest { try? FileManager.default.removeItem(at: fileStore.dataURL) }
+        if isUITest {
+            try? FileManager.default.removeItem(at: fileStore.dataURL)
+            for f in fileStore.snapshotFiles() { try? FileManager.default.removeItem(at: f) }
+        }
 
         var loaded: AppData
         var notice: String?

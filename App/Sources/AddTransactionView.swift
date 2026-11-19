@@ -89,7 +89,7 @@ struct AddTransactionView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(kind == .expense ? "−" : "+")
                     .foregroundStyle(kind == .expense ? Palette.expense : Palette.income)
-                Text(amountText.isEmpty ? "0" : amountText)
+                Text(Self.grouped(amountText))
                     .contentTransition(.numericText())
                     .accessibilityIdentifier("amount-display")
                 Menu {
@@ -209,6 +209,19 @@ struct AddTransactionView: View {
             ok = store.perform(.addTransactions([tx]), label: (kind == .expense ? L("Расход") : L("Доход")) + " " + Fmt.money(minor, currency))
         }
         if ok { dismiss() }
+    }
+
+    /// "15000,5" → "15 000,5" for display (input text stays raw).
+    static func grouped(_ text: String) -> String {
+        guard !text.isEmpty else { return "0" }
+        let parts = text.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+        let intPart = String(parts[0])
+        var out = ""
+        for (i, ch) in intPart.enumerated() {
+            if i > 0 && (intPart.count - i) % 3 == 0 { out.append("\u{202F}") }
+            out.append(ch)
+        }
+        return parts.count > 1 ? out + "," + parts[1] : out
     }
 
     func fail() {

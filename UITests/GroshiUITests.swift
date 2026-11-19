@@ -89,7 +89,8 @@ final class GroshiUITests: XCTestCase {
 
         app.buttons["tab-overview"].tap()
         XCTAssertTrue(app.staticTexts["overview-total"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["overview-total"].label.contains("1"), app.staticTexts["overview-total"].label)
+        let totalLabel = app.staticTexts["overview-total"].label.replacingOccurrences(of: "\u{202F}", with: " ")
+        XCTAssertTrue(totalLabel.contains("1 000"), totalLabel)
         sleep(1)
         shot("05-overview")
         app.descendants(matching: .any).matching(identifier: "share-row").firstMatch.tap()
