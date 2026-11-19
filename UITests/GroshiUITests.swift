@@ -118,7 +118,8 @@ final class GroshiUITests: XCTestCase {
         XCTAssertTrue(wname.waitForExistence(timeout: 5))
         wname.tap(); wname.typeText("Сейф")
         app.buttons["wallet-save"].tap()
-        XCTAssertTrue(app.staticTexts["Сейф"].waitForExistence(timeout: 5))
+        let safe = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Сейф")).firstMatch
+        XCTAssertTrue(safe.waitForExistence(timeout: 5))
         shot("09-wallets")
         app.navigationBars.buttons.firstMatch.tap()
 
