@@ -17,7 +17,13 @@ struct AddTransactionView: View {
     @State private var shake = 0
     @State private var showNewCategory = false
     @FocusState private var noteFocused: Bool
+    @FocusState private var toAmountFocused: Bool
     @State private var loaded = false
+    // Transfer
+    @State private var toWalletID: UUID?
+    @State private var toAmountText = ""
+
+    var keyboardUp: Bool { noteFocused || toAmountFocused }
 
     init(editing: Txn?) { self.editing = editing }
 
@@ -36,18 +42,25 @@ struct AddTransactionView: View {
                         Picker("", selection: $kind.animation(.snappy)) {
                             Text(L("Расход")).tag(TxKind.expense)
                             Text(L("Доход")).tag(TxKind.income)
+                            Text(L("Перевод")).tag(TxKind.transfer)
                         }
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("kind-picker")
 
                         amountDisplay
 
-                        categoryGrid(cats)
-                            .gesture(DragGesture(minimumDistance: 40).onEnded { v in
-                                if abs(v.translation.width) > abs(v.translation.height) * 2 {
-                                    withAnimation(.snappy) { kind = v.translation.width < 0 ? .income : .expense }
-                                }
-                            })
+                        if kind == .transfer {
+                            transferCard
+                                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                        } else {
+                            categoryGrid(cats)
+                                .gesture(DragGesture(minimumDistance: 40).onEnded { v in
+                                    if abs(v.translation.width) > abs(v.translation.height) * 2 {
+                                        withAnimation(.snappy) { kind = v.translation.width < 0 ? .income : .expense }
+                                    }
+                                })
+                                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                        }
 
                         detailsCard
                     }
@@ -55,7 +68,7 @@ struct AddTransactionView: View {
                     .padding(.top, 8)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                if !noteFocused {
+                if !keyboardUp {
                     Keypad(text: $amountText, haptics: data.settings.haptics, onSave: save)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -67,15 +80,19 @@ struct AddTransactionView: View {
                 ToolbarItem(placement: .cancellationAction) { Button(L("Отмена")) { dismiss() } }
                 ToolbarItem(placement: .principal) { EmptyView() }
                 ToolbarItem(placement: .topBarTrailing) { AssistantToolbarButton(context: editing.map { "Пользователь редактирует операцию id \(String($0.id.uuidString.prefix(8)).lowercased())" }) }
-                ToolbarItem(placement: .keyboard) { HStack { Spacer(); Button(L("Готово")) { noteFocused = false } } }
+                ToolbarItem(placement: .keyboard) { HStack { Spacer(); Button(L("Готово")) { noteFocused = false; toAmountFocused = false } } }
             }
-            .animation(.snappy, value: noteFocused)
+            .animation(.snappy, value: keyboardUp)
             .onAppear(perform: load)
             .onChange(of: kind) { _, _ in
                 if let id = categoryID, store.data.category(id)?.kind != kind { categoryID = nil }
+                if kind == .transfer && (toWalletID == nil || toWalletID == walletID) {
+                    toWalletID = store.data.activeWallets.first { $0.id != walletID }?.id
+                }
             }
             .onChange(of: walletID) { _, new in
                 if let w = new.flatMap({ store.data.wallet($0) }), amountText.isEmpty || editing == nil { currency = w.currency }
+                if kind == .transfer && toWalletID == new { toWalletID = store.data.activeWallets.first { $0.id != new }?.id }
             }
             .sheet(isPresented: $showNewCategory) {
                 CategoryEditor(category: nil, kind: kind) { created in categoryID = created.id }
@@ -87,8 +104,12 @@ struct AddTransactionView: View {
     var amountDisplay: some View {
         VStack(spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(kind == .expense ? "−" : "+")
-                    .foregroundStyle(kind == .expense ? Palette.expense : Palette.income)
+                if kind == .transfer {
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 30, weight: .bold)).foregroundStyle(.secondary)
+                } else {
+                    Text(kind == .expense ? "−" : "+")
+                        .foregroundStyle(kind == .expense ? Palette.expense : Palette.income)
+                }
                 Text(Self.grouped(amountText))
                     .contentTransition(.numericText())
                     .accessibilityIdentifier("amount-display")
@@ -148,19 +169,77 @@ struct AddTransactionView: View {
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
-    var detailsCard: some View {
+    var toWallet: Wallet? { toWalletID.flatMap { store.data.wallet($0) } }
+
+    /// From / to wallets and, for different currencies, the credited amount.
+    var transferCard: some View {
         VStack(spacing: 0) {
             HStack {
-                Label(L("Кошелёк"), systemImage: "wallet.pass").foregroundStyle(.secondary)
+                Label(L("Откуда"), systemImage: "arrow.up.circle").foregroundStyle(.secondary)
                 Spacer()
                 Picker("", selection: $walletID) {
                     ForEach(store.data.activeWallets) { w in Text("\(w.name) · \(w.currency)").tag(UUID?.some(w.id)) }
                 }
                 .labelsHidden()
-                .accessibilityIdentifier("wallet-picker")
+                .accessibilityIdentifier("transfer-from")
             }
             .padding(.vertical, 6)
             Divider()
+            HStack {
+                Label(L("Куда"), systemImage: "arrow.down.circle").foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: $toWalletID) {
+                    ForEach(store.data.activeWallets.filter { $0.id != walletID }) { w in Text("\(w.name) · \(w.currency)").tag(UUID?.some(w.id)) }
+                }
+                .labelsHidden()
+                .accessibilityIdentifier("transfer-to")
+            }
+            .padding(.vertical, 6)
+            if let to = toWallet, to.currency != currency {
+                Divider()
+                HStack {
+                    Label(L("Зачислено"), systemImage: "arrow.down.to.line").foregroundStyle(.secondary)
+                    Spacer()
+                    TextField(placeholderCredit(to), text: $toAmountText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .focused($toAmountFocused)
+                        .frame(maxWidth: 140)
+                        .accessibilityIdentifier("transfer-to-amount")
+                    Text(Currencies.symbol(to.currency)).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 10)
+            }
+            if store.data.activeWallets.count < 2 {
+                Text(L("Для перевода нужен второй кошелёк: «Ещё → Кошельки»."))
+                    .font(.footnote).foregroundStyle(.secondary).padding(.vertical, 8)
+            }
+        }
+        .padding(.horizontal, 14)
+        .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// Suggested credited amount at the app's exchange rate.
+    func placeholderCredit(_ to: Wallet) -> String {
+        guard let m = amountMinor, let c = store.data.settings.converter.convert(m, from: currency, to: to.currency) else { return "0" }
+        return MoneyMath.plainString(c, currency: to.currency).replacingOccurrences(of: ".", with: ",")
+    }
+
+    var detailsCard: some View {
+        VStack(spacing: 0) {
+            if kind != .transfer {
+                HStack {
+                    Label(L("Кошелёк"), systemImage: "wallet.pass").foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("", selection: $walletID) {
+                        ForEach(store.data.activeWallets) { w in Text("\(w.name) · \(w.currency)").tag(UUID?.some(w.id)) }
+                    }
+                    .labelsHidden()
+                    .accessibilityIdentifier("wallet-picker")
+                }
+                .padding(.vertical, 6)
+                Divider()
+            }
             HStack {
                 Label(L("Дата"), systemImage: "calendar").foregroundStyle(.secondary)
                 Spacer()
@@ -189,6 +268,13 @@ struct AddTransactionView: View {
             kind = t.kind
             amountText = MoneyMath.plainString(t.amountMinor, currency: t.currency).replacingOccurrences(of: ".00", with: "").replacingOccurrences(of: ".", with: ",")
             currency = t.currency; categoryID = t.categoryID; walletID = t.walletID; date = t.date; note = t.note
+            if t.isTransfer {
+                categoryID = nil
+                toWalletID = t.toWalletID
+                if t.creditedCurrency != t.currency {
+                    toAmountText = MoneyMath.plainString(t.creditedMinor, currency: t.creditedCurrency).replacingOccurrences(of: ".", with: ",")
+                }
+            }
         } else {
             walletID = data.defaultWallet?.id
             currency = data.defaultWallet?.currency ?? data.settings.baseCurrency
@@ -196,6 +282,7 @@ struct AddTransactionView: View {
     }
 
     func save() {
+        if kind == .transfer { saveTransfer(); return }
         guard let minor = amountMinor, minor > 0 else { fail(); return }
         guard let cat = categoryID else { fail(); return }
         guard let wal = walletID ?? store.data.defaultWallet?.id else { fail(); return }
@@ -207,6 +294,34 @@ struct AddTransactionView: View {
         } else {
             let tx = Txn(kind: kind, amountMinor: minor, currency: currency, categoryID: cat, walletID: wal, date: date, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
             ok = store.perform(.addTransactions([tx]), label: (kind == .expense ? L("Расход") : L("Доход")) + " " + Fmt.money(minor, currency))
+        }
+        if ok { dismiss() }
+    }
+
+    func saveTransfer() {
+        guard let minor = amountMinor, minor > 0,
+              let from = walletID ?? store.data.defaultWallet?.id,
+              let to = toWallet, to.id != from else { fail(); return }
+        var credited: Int64? = nil
+        if to.currency != currency {
+            if !toAmountText.isEmpty {
+                guard let v = MoneyMath.parseMinor(toAmountText, currency: to.currency), v > 0 else { fail(); return }
+                credited = v
+            } else if let v = store.data.settings.converter.convert(minor, from: currency, to: to.currency) {
+                credited = v
+            } else { fail(); return }
+        }
+        let cleanNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ok: Bool
+        if let t = editing {
+            ok = store.perform(.updateTransactions(ids: [t.id], changes: TxChanges(
+                kind: .transfer, amountMinor: minor, currency: currency, walletID: from, date: date, note: cleanNote,
+                transfer: TransferTarget(toWalletID: to.id, toAmountMinor: credited, toCurrency: to.currency))),
+                               label: L("Операция изменена"))
+        } else {
+            let tx = Txn.transfer(from: from, to: to.id, amountMinor: minor, currency: currency, toAmountMinor: credited,
+                                  toCurrency: to.currency, date: date, note: cleanNote)
+            ok = store.perform(.addTransactions([tx]), label: L("Перевод") + " " + Fmt.money(minor, currency))
         }
         if ok { dismiss() }
     }

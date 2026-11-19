@@ -41,6 +41,18 @@ extension CategoryIconView {
     }
 }
 
+/// Neutral glyph for transfers between own wallets.
+struct TransferIcon: View {
+    var size: CGFloat = 40
+    var body: some View {
+        Image(systemName: "arrow.left.arrow.right")
+            .font(.system(size: size * 0.4, weight: .semibold))
+            .foregroundStyle(Color(hex: "#576574"))
+            .frame(width: size, height: size)
+            .background(Color(hex: "#8395A7").opacity(0.18), in: Circle())
+    }
+}
+
 /// Floating capsule tab bar with a bubble that slides to the active tab.
 struct BubbleTabBar: View {
     @Binding var selection: AppTab
@@ -261,12 +273,16 @@ struct TransactionRow: View {
         let cat = store.data.category(tx.categoryID)
         let wallet = store.data.wallet(tx.walletID)
         HStack(spacing: 12) {
-            CategoryIconView(category: cat, size: 42)
+            if tx.isTransfer {
+                TransferIcon(size: 42)
+            } else {
+                CategoryIconView(category: cat, size: 42)
+            }
             VStack(alignment: .leading, spacing: 3) {
-                Text(cat?.name ?? L("Без категории")).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(tx.isTransfer ? L("Перевод") : (cat?.name ?? L("Без категории"))).font(.subheadline.weight(.semibold)).lineLimit(1)
                 HStack(spacing: 4) {
-                    Image(systemName: wallet?.symbol ?? "wallet.pass").font(.caption2)
-                    Text(wallet?.name ?? "—")
+                    Image(systemName: tx.isTransfer ? "arrow.left.arrow.right" : (wallet?.symbol ?? "wallet.pass")).font(.caption2)
+                    Text(tx.isTransfer ? Fmt.route(tx, store.data) : (wallet?.name ?? "—"))
                     if !tx.note.isEmpty { Text("·"); Text(tx.note).lineLimit(1) }
                 }
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)

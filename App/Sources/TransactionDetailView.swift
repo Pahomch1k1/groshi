@@ -44,18 +44,30 @@ struct TransactionDetailView: View {
         let wallet = store.data.wallet(tx.walletID)
         return ScrollView {
             VStack(spacing: 18) {
-                CategoryIconView(category: cat, size: 72)
-                    .padding(.top, 8)
+                Group {
+                    if tx.isTransfer { TransferIcon(size: 72) } else { CategoryIconView(category: cat, size: 72) }
+                }
+                .padding(.top, 8)
                 Text(Fmt.signed(tx))
                     .font(.system(size: 38, weight: .bold, design: .rounded).monospacedDigit())
                     .foregroundStyle(Palette.amount(tx.kind))
-                Text(cat?.name ?? "—").font(.headline)
+                Text(tx.isTransfer ? Fmt.route(tx, store.data) : (cat?.name ?? "—")).font(.headline)
 
                 Card {
                     VStack(spacing: 12) {
-                        row(L("Тип"), tx.kind == .expense ? L("Расход") : L("Доход"))
+                        row(L("Тип"), tx.kind == .expense ? L("Расход") : (tx.kind == .income ? L("Доход") : L("Перевод")))
                         Divider()
-                        row(L("Кошелёк"), wallet.map { "\($0.name) · \($0.currency)" } ?? "—")
+                        if tx.isTransfer {
+                            row(L("Откуда"), wallet.map { "\($0.name) · \($0.currency)" } ?? "—")
+                            Divider()
+                            row(L("Куда"), tx.toWalletID.flatMap { store.data.wallet($0) }.map { "\($0.name) · \($0.currency)" } ?? "—")
+                            if tx.creditedCurrency != tx.currency {
+                                Divider()
+                                row(L("Зачислено"), Fmt.money(tx.creditedMinor, tx.creditedCurrency))
+                            }
+                        } else {
+                            row(L("Кошелёк"), wallet.map { "\($0.name) · \($0.currency)" } ?? "—")
+                        }
                         Divider()
                         row(L("Дата"), Fmt.fullDate(tx.date))
                         if tx.currency != store.data.settings.baseCurrency,

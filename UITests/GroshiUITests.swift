@@ -87,6 +87,21 @@ final class GroshiUITests: XCTestCase {
         addExpense("300", category: "Продукты")
         addExpense("700", category: "Одежда")
 
+        // Transfer between own wallets: listed, but Cash Flow unchanged.
+        app.buttons["add-button"].tap()
+        XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5))
+        app.segmentedControls["kind-picker"].buttons["Перевод"].tap()
+        for ch in "500" { app.buttons["key-\(ch)"].tap() }
+        shot("02b-transfer-form")
+        app.buttons["save-button"].tap()
+        let rows = app.descendants(matching: .any).matching(identifier: "tx-row")
+        XCTAssertTrue(waitFor { rows.count == 3 })
+        let exp = app.staticTexts["cashflow-expense"].label.replacingOccurrences(of: "\u{202F}", with: " ")
+        XCTAssertTrue(exp.contains("1 000"), exp)
+        let net = app.staticTexts["cashflow-net"].label.replacingOccurrences(of: "\u{202F}", with: " ")
+        XCTAssertTrue(net.contains("1 000"), net)
+        shot("02c-home-with-transfer")
+
         app.buttons["tab-overview"].tap()
         XCTAssertTrue(app.staticTexts["overview-total"].waitForExistence(timeout: 5))
         let totalLabel = app.staticTexts["overview-total"].label.replacingOccurrences(of: "\u{202F}", with: " ")

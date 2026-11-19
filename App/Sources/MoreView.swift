@@ -496,16 +496,32 @@ struct ImportPreview: View {
         NavigationStack {
             List {
                 Section(fileName) {
+                    LabeledContent(L("Строк в файле"), value: "\(plan.rowCount)")
                     LabeledContent(L("Новых операций"), value: "\(plan.transactions.count)")
                     LabeledContent(L("Пропущено дублей"), value: "\(plan.duplicates)")
-                    if plan.transfers > 0 { LabeledContent(L("Переводы (как доход/расход)"), value: "\(plan.transfers)") }
+                    if plan.pairedTransfers > 0 { LabeledContent(L("Переводы между кошельками"), value: "\(plan.pairedTransfers)") }
+                    if plan.unpairedTransfers > 0 { LabeledContent(L("Переводы без пары (как доход/расход)"), value: "\(plan.unpairedTransfers)") }
                     LabeledContent(L("Новых категорий"), value: "\(plan.newCategories.count)")
                     LabeledContent(L("Новых кошельков"), value: "\(plan.newWallets.count)")
                     if !plan.transactions.isEmpty {
                         let inc = plan.transactions.filter { $0.kind == .income }.count
-                        LabeledContent(L("Доходов / расходов"), value: "\(inc) / \(plan.transactions.count - inc)")
+                        let exp = plan.transactions.filter { $0.kind == .expense }.count
+                        LabeledContent(L("Доходов / расходов"), value: "\(inc) / \(exp)")
                     }
                 }
+                Section {
+                    let src = plan.sourceTotals, dst = plan.plannedTotals
+                    let currencies = Set(src.income.keys).union(src.expense.keys).sorted()
+                    ForEach(currencies, id: \.self) { c in
+                        LabeledContent(L("Доходы") + " " + c, value: Fmt.money(src.income[c] ?? 0, c))
+                        LabeledContent(L("Расходы") + " " + c, value: Fmt.money(src.expense[c] ?? 0, c))
+                    }
+                    if plan.duplicates == 0 {
+                        Label(src == dst ? L("Суммы совпадают с файлом") : L("Суммы НЕ совпадают с файлом"),
+                              systemImage: src == dst ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(src == dst ? Palette.income : Palette.expense)
+                    }
+                } header: { Text(L("Сверка с файлом (без переводов)")) }
                 if !plan.newCategories.isEmpty {
                     Section(L("Будут созданы категории")) { Text(plan.newCategories.map { $0.name }.joined(separator: ", ")).font(.footnote) }
                 }

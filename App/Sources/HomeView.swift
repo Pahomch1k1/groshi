@@ -240,6 +240,7 @@ struct FilterSheet: View {
                         Text(L("Все")).tag(TxKind?.none)
                         Text(L("Расходы")).tag(TxKind?.some(.expense))
                         Text(L("Доходы")).tag(TxKind?.some(.income))
+                        Text(L("Переводы")).tag(TxKind?.some(.transfer))
                     }
                     .pickerStyle(.segmented)
                 }

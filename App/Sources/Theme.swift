@@ -92,7 +92,13 @@ enum Fmt {
     }
 
     static func signed(_ t: Txn) -> String {
-        MoneyMath.format(t.signedMinor, currency: t.currency, showSign: true)
+        if t.isTransfer { return MoneyMath.format(t.amountMinor, currency: t.currency) }
+        return MoneyMath.format(t.signedMinor, currency: t.currency, showSign: true)
+    }
+
+    /// "Карта → Наличные"
+    static func route(_ t: Txn, _ data: AppData) -> String {
+        (data.wallet(t.walletID)?.name ?? "—") + " → " + (t.toWalletID.flatMap { data.wallet($0)?.name } ?? "—")
     }
 
     static func dayTitle(_ day: Date, calendar: Calendar) -> String {
