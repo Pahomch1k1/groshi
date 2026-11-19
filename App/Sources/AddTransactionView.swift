@@ -48,7 +48,7 @@ struct AddTransactionView: View {
                     .padding(.top, 2)
                 descriptionCard
                     .padding(.horizontal, 20)
-                    .padding(.top, 22)
+                    .padding(.top, stage == .category ? 22 : 12)
                 if stage == .category {
                     categoryGrid
                         .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .bottom).combined(with: .opacity)))
@@ -133,11 +133,11 @@ struct AddTransactionView: View {
                 VStack(spacing: 6) {
                     Group {
                         if stage == .category {
-                            CategoryPlaceholderIcon(size: 84)
+                            CategoryPlaceholderIcon(size: 76)
                         } else if kind == .transfer {
-                            TransferIcon(size: 84).background(Palette.card, in: Circle())
+                            TransferIcon(size: 72).background(Palette.card, in: Circle())
                         } else {
-                            CategoryIconView(category: category, size: 84, style: .white)
+                            CategoryIconView(category: category, size: 72, style: .white)
                         }
                     }
                     .transition(.scale.combined(with: .opacity))
@@ -161,14 +161,14 @@ struct AddTransactionView: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(amountText)
-                        .font(.system(size: 54, weight: .bold).monospacedDigit())
+                        .font(.system(size: 48, weight: .bold).monospacedDigit())
                         .contentTransition(.numericText())
                         .accessibilityIdentifier("amount-display")
                     Menu {
                         ForEach(Currencies.common, id: \.self) { c in Button(c + "  " + Currencies.symbol(c)) { currency = c } }
                     } label: {
                         HStack(spacing: 2) {
-                            Text(currency).font(.system(size: 40, weight: .bold))
+                            Text(currency).font(.system(size: 34, weight: .bold))
                             Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.textSecondary)
                         }
                         .foregroundStyle(Color.primary)
@@ -197,7 +197,7 @@ struct AddTransactionView: View {
         VStack(alignment: .leading, spacing: 12) {
             TextField(L("Опишите операцию"), text: $note, axis: .vertical)
                 .font(.system(size: 18))
-                .lineLimit(2...4)
+                .lineLimit(1...3)
                 .focused($noteFocused)
                 .accessibilityIdentifier("note-field")
             ScrollView(.horizontal, showsIndicators: false) {
@@ -299,7 +299,7 @@ struct AddTransactionView: View {
     var amountStage: some View {
         VStack(spacing: 14) {
             chipsRow
-                .padding(.top, 16)
+                .padding(.top, 10)
             Spacer(minLength: 0)
             if !noteFocused && !creditFocused {
                 keypad
@@ -415,7 +415,7 @@ struct AddTransactionView: View {
                             }
                             .font(.system(size: 26, weight: .semibold))
                             .foregroundStyle(Color.primary)
-                            .frame(maxWidth: .infinity).frame(height: 62)
+                            .frame(maxWidth: .infinity).frame(height: 54)
                             .background(Palette.card.opacity(0.9), in: Capsule())
                             .shadow(color: Palette.shadow, radius: 4, y: 2)
                         }

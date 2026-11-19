@@ -149,7 +149,6 @@ struct SpendTabBar: View {
         .background(Palette.card.opacity(0.55), in: Capsule(style: .continuous))
         .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.10), radius: 20, y: 8)
-        .accessibilityIdentifier("tabbar")
     }
 }
 
@@ -316,7 +315,7 @@ struct PeriodPager: View {
         case .year: f.setLocalizedDateFormatFromTemplate("yyyy")
         default: return Fmt.periodTitle(p, calendar: cal)
         }
-        return f.string(from: p.start).capitalizedFirst
+        return f.string(from: p.start).capitalizedFirst.replacingOccurrences(of: " г.", with: "").replacingOccurrences(of: " р.", with: "")
     }
 }
 

@@ -111,7 +111,8 @@ final class GroshiUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["add-button"].waitForExistence(timeout: 10))
         addExpense("300", category: "Продукты")
-        let home = app.buttons["tab-home"], overview = app.buttons["tab-overview"], more = app.buttons["tab-more"]
+        let any = app.descendants(matching: .any)
+        let home = any["tab-home"], overview = any["tab-overview"], more = any["tab-more"]
         let search = app.textFields["search-field"]
         let bar0 = home.frame, search0 = search.frame
         var maxBarShift: CGFloat = 0, maxSearchShift: CGFloat = 0
