@@ -315,7 +315,7 @@ struct PeriodPager: View {
         case .year: f.setLocalizedDateFormatFromTemplate("yyyy")
         default: return Fmt.periodTitle(p, calendar: cal)
         }
-        return f.string(from: p.start).capitalizedFirst.replacingOccurrences(of: "\s*[гр]\.$", with: "", options: .regularExpression)
+        return f.string(from: p.start).capitalizedFirst.replacingOccurrences(of: #"\s*[гр]\.$"#, with: "", options: .regularExpression)
     }
 }
 
