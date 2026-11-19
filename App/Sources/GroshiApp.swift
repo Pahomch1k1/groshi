@@ -8,6 +8,7 @@ typealias FinCategory = GroshiCore.Category
 struct GroshiApp: App {
     @State private var store: Store
     @State private var assistant: AssistantViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let s = Store()
@@ -24,10 +25,17 @@ struct GroshiApp: App {
                 .environment(\.locale, Lang.locale)
                 .id(store.data.settings.language) // rebuild all text on language change
                 .tint(Palette.accent)
+                .onChange(of: scenePhase) { _, phase in if phase == .active { store.catchUpRecurring() } }
         }
     }
 }
 
+/// Root: the three tabs stay alive (state and scroll position are kept) and are cross-faded;
+/// the tab bar and the "+" button float in fixed overlays that never take part in the content layout.
+///
+/// The 0.1 jump came from (1) recreating each tab's NavigationStack with a large title and a search bar
+/// on every switch, (2) a scale transition on the content, and (3) a spring animation applied to the
+/// container that held the "+" button (shown only on some tabs) together with the tab bar.
 struct RootView: View {
     @Environment(Store.self) private var store
     @Environment(AssistantViewModel.self) private var ai
@@ -36,44 +44,38 @@ struct RootView: View {
     var body: some View {
         @Bindable var store = store
         @Bindable var ai = ai
-        ZStack(alignment: .bottom) {
-            Group {
-                switch store.selectedTab {
-                case .home: HomeView()
-                case .overview: OverviewView()
-                case .assistant: AssistantView(isSheet: false)
-                case .more: MoreView()
+        ZStack {
+            Palette.background.ignoresSafeArea()
+            tab(.home) { HomeView() }
+            tab(.overview) { OverviewView() }
+            tab(.more) { MoreView() }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if store.selectedTab != .more {
+                FAB(systemImage: "plus", onLongPress: {
+                    Haptics.success(enabled: store.data.settings.haptics)
+                    ai.openSheet(context: nil, startVoice: true)
+                }) {
+                    Haptics.tap(enabled: store.data.settings.haptics)
+                    showAdd = true
                 }
+                .accessibilityIdentifier("add-button")
+                .padding(.trailing, 18)
+                .padding(.bottom, 92)
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
-            .transition(.opacity.combined(with: .scale(scale: 0.985)))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            VStack(spacing: 12) {
+        }
+        .overlay(alignment: .bottom) {
+            VStack(spacing: 10) {
                 if let t = store.toast {
                     ToastView(toast: t).transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                HStack(alignment: .bottom) {
-                    Spacer()
-                    if store.selectedTab == .home || store.selectedTab == .overview {
-                        FAB(systemImage: "plus", onLongPress: {
-                            Haptics.success(enabled: store.data.settings.haptics)
-                            ai.openSheet(context: nil, startVoice: true)
-                        }) {
-                            Haptics.tap(enabled: store.data.settings.haptics)
-                            showAdd = true
-                        }
-                        .accessibilityIdentifier("add-button")
-                        .transition(.scale.combined(with: .opacity))
-                    }
-                }
-                .padding(.horizontal, 20)
-                BubbleTabBar(selection: $store.selectedTab, haptics: store.data.settings.haptics)
-                    .padding(.horizontal, 16)
+                SpendTabBar(selection: $store.selectedTab, haptics: store.data.settings.haptics)
+                    .padding(.horizontal, 24)
             }
-            .padding(.bottom, 4)
-            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: store.selectedTab)
+            .padding(.bottom, 2)
         }
-        .background(Palette.background.ignoresSafeArea())
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.selectedTab == .more)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .sheet(isPresented: $showAdd) {
             AddTransactionView(editing: nil)
@@ -89,9 +91,19 @@ struct RootView: View {
             Text(store.startupNotice ?? "")
         }
     }
+
+    /// Keeps the tab in the hierarchy; only its opacity and hit-testing change.
+    func tab<V: View>(_ t: AppTab, @ViewBuilder _ content: () -> V) -> some View {
+        let active = store.selectedTab == t
+        return content()
+            .opacity(active ? 1 : 0)
+            .allowsHitTesting(active)
+            .accessibilityHidden(!active)
+            .animation(.easeInOut(duration: 0.16), value: active)
+    }
 }
 
-/// Bottom padding so scroll content clears the floating tab bar.
+/// Bottom padding so scroll content clears the floating tab bar and "+".
 extension View {
     func tabBarSafeArea() -> some View {
         safeAreaInset(edge: .bottom) { Color.clear.frame(height: 96) }

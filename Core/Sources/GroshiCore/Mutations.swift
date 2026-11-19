@@ -36,14 +36,16 @@ public struct TxChanges: Hashable {
     public var note: String?
     public var labels: [String]?
     public var excluded: Bool?
+    /// Links the transaction to a recurring rule.
+    public var recurringID: UUID?
     /// For transfers: new destination (replaces destination wallet, amount and currency together).
     public var transfer: TransferTarget?
     public init(kind: TxKind? = nil, amountMinor: Int64? = nil, currency: String? = nil, categoryID: UUID? = nil,
                 walletID: UUID? = nil, date: Date? = nil, note: String? = nil, transfer: TransferTarget? = nil,
-                labels: [String]? = nil, excluded: Bool? = nil) {
+                labels: [String]? = nil, excluded: Bool? = nil, recurringID: UUID? = nil) {
         self.kind = kind; self.amountMinor = amountMinor; self.currency = currency; self.categoryID = categoryID
         self.walletID = walletID; self.date = date; self.note = note; self.transfer = transfer
-        self.labels = labels; self.excluded = excluded
+        self.labels = labels; self.excluded = excluded; self.recurringID = recurringID
     }
 }
 
@@ -108,6 +110,7 @@ public enum Mutation: Hashable {
                 if let v = ch.note { t.note = v }
                 if let v = ch.labels { t.tags = v }
                 if let v = ch.excluded { t.isExcluded = v }
+                if let v = ch.recurringID { t.recurringID = v }
                 if let tr = ch.transfer {
                     t.toWalletID = tr.toWalletID; t.toAmountMinor = tr.toAmountMinor; t.toCurrency = tr.toCurrency?.uppercased()
                 }

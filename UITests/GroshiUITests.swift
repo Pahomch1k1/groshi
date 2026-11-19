@@ -9,7 +9,7 @@ final class GroshiUITests: XCTestCase {
         app.launchArguments = ["-uiTestReset", "-AppleLanguages", "(ru)", "-AppleLocale", "ru_UA"]
     }
 
-    /// Screenshots go to the host filesystem (simulator shares it) so CI can upload them.
+    /// Screenshots go to the host filesystem (the simulator shares it) so CI can upload them.
     func shot(_ name: String) {
         let s = XCUIScreen.main.screenshot()
         let a = XCTAttachment(screenshot: s); a.name = name; a.lifetime = .keepAlways; add(a)
@@ -18,138 +18,137 @@ final class GroshiUITests: XCTestCase {
         try? s.pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
     }
 
-    func addExpense(_ digits: String, category: String, note: String? = nil) {
+    func type(_ digits: String) { for ch in digits { app.buttons["key-\(ch)"].tap() } }
+
+    func addExpense(_ digits: String, category: String, shotName: String? = nil) {
         app.buttons["add-button"].tap()
-        XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5))
-        for ch in digits { app.buttons["key-\(ch)"].tap() }
+        XCTAssertTrue(app.buttons["category-\(category)"].waitForExistence(timeout: 5))
         app.buttons["category-\(category)"].tap()
-        if let note {
-            let f = app.textFields["note-field"]
-            f.tap(); f.typeText(note)
-            app.toolbars.buttons["Готово"].firstMatch.tap()
-        }
+        XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5))
+        type(digits)
+        if let shotName { shot(shotName) }
         app.buttons["save-button"].tap()
+        XCTAssertTrue(waitFor { !self.app.buttons["save-button"].exists })
     }
 
-    func testManualAddEditDeleteAndPersistence() {
+    var rows: XCUIElementQuery { app.descendants(matching: .any).matching(identifier: "tx-row") }
+
+    func label(_ id: String) -> String { app.staticTexts[id].label.replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ") }
+
+    func testEntryFlowCalculatorTransferAndPersistence() {
         app.launch()
         XCTAssertTrue(app.buttons["add-button"].waitForExistence(timeout: 10))
         shot("01-home-empty")
 
-        addExpense("850", category: "Кафе и рестораны")
-        XCTAssertTrue(app.descendants(matching: .any)["tx-row"].firstMatch.waitForExistence(timeout: 5))
-        addExpense("1200", category: "Бензин", note: "Окко")
-        // Income via the type switch
+        // Step 1: category grid.
         app.buttons["add-button"].tap()
+        XCTAssertTrue(app.buttons["category-Кафе и рестораны"].waitForExistence(timeout: 5))
+        sleep(1)
+        shot("02-select-category")
+        app.buttons["category-Кафе и рестораны"].tap()
+        // Step 2: calculator — 1000 − 150 = 850.
         XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5))
-        app.segmentedControls["kind-picker"].buttons["Доход"].tap()
-        for ch in "15000" { app.buttons["key-\(ch)"].tap() }
+        type("1000"); app.buttons["key-−"].tap(); type("150")
+        sleep(1)
+        shot("03-calculator")
+        XCTAssertTrue(app.staticTexts["amount-display"].label.replacingOccurrences(of: "\u{202F}", with: "").contains("850"))
+        // Category menu keeps the amount.
+        app.buttons["category-switch"].tap()
+        sleep(1)
+        shot("04-category-menu")
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Бензин")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["amount-display"].label.replacingOccurrences(of: "\u{202F}", with: "").contains("850"))
+        app.buttons["save-button"].tap()
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+
+        addExpense("1200", category: "Кафе и рестораны")
+        // Income.
+        app.buttons["add-button"].tap()
+        XCTAssertTrue(app.buttons["kind-income"].waitForExistence(timeout: 5))
+        app.buttons["kind-income"].tap()
         app.buttons["category-Бизнес"].tap()
-        shot("02-add-form")
+        type("15000")
+        app.buttons["save-button"].tap()
+        // Transfer: listed, Cash Flow unchanged.
+        app.buttons["add-button"].tap()
+        XCTAssertTrue(app.buttons["kind-transfer"].waitForExistence(timeout: 5))
+        app.buttons["kind-transfer"].tap()
+        type("500")
+        shot("05-transfer")
         app.buttons["save-button"].tap()
 
-        let rows = app.descendants(matching: .any).matching(identifier: "tx-row")
-        XCTAssertTrue(rows.element(boundBy: 2).waitForExistence(timeout: 5))
-        XCTAssertEqual(rows.count, 3)
-        // Totals: income 15 000, expense 2 050, net +12 950
-        let expense = app.staticTexts["cashflow-expense"].label
-        XCTAssertTrue(expense.replacingOccurrences(of: "\u{202F}", with: " ").contains("2 050"), expense)
-        let net = app.staticTexts["cashflow-net"].label
-        XCTAssertTrue(net.replacingOccurrences(of: "\u{202F}", with: " ").contains("12 950"), net)
-        shot("03-home-with-data")
+        XCTAssertTrue(waitFor { self.rows.count == 4 })
+        XCTAssertTrue(label("cashflow-expense").contains("2 050"), label("cashflow-expense"))
+        XCTAssertTrue(label("cashflow-net").contains("12 950"), label("cashflow-net"))
+        sleep(1)
+        shot("06-home-with-data")
 
-        // Relaunch without reset: data must survive.
+        // Detail card.
+        rows.element(boundBy: 1).tap()
+        XCTAssertTrue(app.buttons["detail-delete"].waitForExistence(timeout: 5))
+        sleep(1)
+        shot("07-transaction-detail")
+        app.buttons["detail-delete"].tap()
+        app.sheets.buttons["Удалить"].firstMatch.tap()
+        XCTAssertTrue(waitFor { self.rows.count == 3 })
+        if app.buttons["toast-undo"].waitForExistence(timeout: 3) {
+            app.buttons["toast-undo"].tap()
+            XCTAssertTrue(waitFor { self.rows.count == 4 })
+        }
+
+        // Relaunch without reset: data survives.
         app.terminate()
         let again = XCUIApplication()
         again.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_UA"]
         again.launch()
         let rows2 = again.descendants(matching: .any).matching(identifier: "tx-row")
-        XCTAssertTrue(rows2.element(boundBy: 2).waitForExistence(timeout: 10))
-        XCTAssertEqual(rows2.count, 3)
-
-        // Open detail → delete
-        rows2.element(boundBy: 0).tap()
-        XCTAssertTrue(again.buttons["detail-delete"].waitForExistence(timeout: 5))
-        shot("04-detail")
-        again.buttons["detail-delete"].tap()
-        again.sheets.buttons["Удалить"].firstMatch.tap()
-        XCTAssertTrue(waitFor { rows2.count == 2 })
-        // Undo from toast
-        if again.buttons["toast-undo"].waitForExistence(timeout: 3) {
-            again.buttons["toast-undo"].tap()
-            XCTAssertTrue(waitFor { rows2.count == 3 })
-        }
+        XCTAssertTrue(rows2.element(boundBy: 3).waitForExistence(timeout: 10))
+        XCTAssertEqual(rows2.count, 4)
     }
 
-    func testOverviewCategoriesWalletsAndAssistant() {
+    /// The tab bar and the content must not move vertically while switching tabs, even rapidly.
+    func testTabSwitchingDoesNotJump() {
         app.launch()
         XCTAssertTrue(app.buttons["add-button"].waitForExistence(timeout: 10))
         addExpense("300", category: "Продукты")
-        addExpense("700", category: "Одежда")
+        let home = app.buttons["tab-home"], overview = app.buttons["tab-overview"], more = app.buttons["tab-more"]
+        let search = app.textFields["search-field"]
+        let bar0 = home.frame, search0 = search.frame
+        var maxBarShift: CGFloat = 0, maxSearchShift: CGFloat = 0
+        for i in 0..<6 {
+            (i % 2 == 0 ? overview : more).tap()
+            maxBarShift = max(maxBarShift, abs(home.frame.minY - bar0.minY))
+            if i == 0 { shot("08-overview") }
+            if i == 1 { shot("09-more") }
+            home.tap()
+            // Sample during the cross-fade and after it.
+            maxBarShift = max(maxBarShift, abs(home.frame.minY - bar0.minY))
+            maxSearchShift = max(maxSearchShift, abs(search.frame.minY - search0.minY))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+            maxBarShift = max(maxBarShift, abs(home.frame.minY - bar0.minY))
+            maxSearchShift = max(maxSearchShift, abs(search.frame.minY - search0.minY))
+        }
+        XCTAssertLessThan(maxBarShift, 0.5, "tab bar moved by \(maxBarShift) pt")
+        XCTAssertLessThan(maxSearchShift, 0.5, "home content moved by \(maxSearchShift) pt")
 
-        // Transfer between own wallets: listed, but Cash Flow unchanged.
-        app.buttons["add-button"].tap()
-        XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5))
-        app.segmentedControls["kind-picker"].buttons["Перевод"].tap()
-        for ch in "500" { app.buttons["key-\(ch)"].tap() }
-        shot("02b-transfer-form")
-        app.buttons["save-button"].tap()
-        let rows = app.descendants(matching: .any).matching(identifier: "tx-row")
-        XCTAssertTrue(waitFor { rows.count == 3 })
-        let exp = app.staticTexts["cashflow-expense"].label.replacingOccurrences(of: "\u{202F}", with: " ")
-        XCTAssertTrue(exp.contains("1 000"), exp)
-        let net = app.staticTexts["cashflow-net"].label.replacingOccurrences(of: "\u{202F}", with: " ")
-        XCTAssertTrue(net.contains("1 000"), net)
-        shot("02c-home-with-transfer")
-
-        app.buttons["tab-overview"].tap()
+        // Overview total and More screens.
+        overview.tap()
         XCTAssertTrue(app.staticTexts["overview-total"].waitForExistence(timeout: 5))
-        let totalLabel = app.staticTexts["overview-total"].label.replacingOccurrences(of: "\u{202F}", with: " ")
-        XCTAssertTrue(totalLabel.contains("1 000"), totalLabel)
-        sleep(1)
-        shot("05-overview")
-        app.descendants(matching: .any).matching(identifier: "share-row").firstMatch.tap()
-        sleep(1)
-        shot("06-category-transactions")
-        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(label("overview-total").contains("300"), label("overview-total"))
 
-        // Create a category
-        app.buttons["tab-more"].tap()
-        shot("07-more")
+        more.tap()
         app.buttons["more-categories"].tap()
+        sleep(1)
+        shot("10-categories")
         app.buttons["add-category"].tap()
         let name = app.textFields["category-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap(); name.typeText("Кальян")
-        shot("08-category-editor")
+        sleep(1)
+        shot("11-create-category")
         app.buttons["category-save"].tap()
         let hookah = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Кальян")).firstMatch
-        let found = hookah.waitForExistence(timeout: 5)
-        shot("08b-categories-list")
-        XCTAssertTrue(found)
-        app.navigationBars.buttons.firstMatch.tap()
-
-        // Create a wallet
-        app.buttons["more-wallets"].tap()
-        app.buttons["add-wallet"].tap()
-        let wname = app.textFields["wallet-name"]
-        XCTAssertTrue(wname.waitForExistence(timeout: 5))
-        wname.tap(); wname.typeText("Сейф")
-        app.buttons["wallet-save"].tap()
-        let safe = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Сейф")).firstMatch
-        XCTAssertTrue(safe.waitForExistence(timeout: 5))
-        shot("09-wallets")
-        app.navigationBars.buttons.firstMatch.tap()
-
-        // Assistant tab renders (no key in CI → banner)
-        app.buttons["tab-assistant"].tap()
-        XCTAssertTrue(app.textFields["assistant-input"].waitForExistence(timeout: 5) || app.textViews["assistant-input"].waitForExistence(timeout: 2))
-        shot("10-assistant")
-
-        // Dark theme screenshot of home
-        app.buttons["tab-home"].tap()
-        sleep(1)
-        shot("11-home-final")
+        XCTAssertTrue(hookah.waitForExistence(timeout: 5))
     }
 
     func waitFor(timeout: TimeInterval = 5, _ cond: () -> Bool) -> Bool {

@@ -2,57 +2,121 @@ import SwiftUI
 import UniformTypeIdentifiers
 import GroshiCore
 
+/// Spendee "More": large title and white rounded groups with counts on the right.
 struct MoreView: View {
     @Environment(Store.self) private var store
 
     var body: some View {
+        let data = store.data
         NavigationStack {
-            List {
-                Section {
-                    NavigationLink { CategoriesView() } label: { Label(L("Категории"), systemImage: "square.grid.2x2") }
-                        .accessibilityIdentifier("more-categories")
-                    NavigationLink { WalletsView() } label: { Label(L("Кошельки"), systemImage: "wallet.pass") }
-                        .accessibilityIdentifier("more-wallets")
-                    NavigationLink { CurrencySettingsView() } label: {
-                        LabeledContent { Text(store.data.settings.baseCurrency) } label: { Label(L("Валюты"), systemImage: "coloncurrencysign.circle") }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(L("Ещё")).font(.system(size: 34, weight: .bold)).padding(.top, 54)
+
+                    group {
+                        link(L("Категории"), "square.on.circle", value: "\(data.categories.filter { !$0.isArchived }.count)", id: "more-categories") { CategoriesView() }
+                        link(L("Метки"), "tag", value: "\(data.labels.count)", id: "more-labels") { LabelsView() }
+                        link(L("Основная валюта"), "dollarsign.circle", value: data.settings.baseCurrency, id: "more-currency") { CurrencySettingsView() }
                     }
-                }
-                Section {
-                    NavigationLink { AISettingsView() } label: { Label(L("AI-ассистент"), systemImage: "sparkles") }
-                }
-                Section(L("Оформление")) {
-                    Picker(selection: Binding(get: { store.data.settings.theme }, set: { v in store.updateSettings { $0.theme = v } })) {
-                        Text(L("Системная")).tag(AppTheme.system)
-                        Text(L("Светлая")).tag(AppTheme.light)
-                        Text(L("Тёмная")).tag(AppTheme.dark)
-                    } label: { Label(L("Тема"), systemImage: "circle.lefthalf.filled") }
-                    Picker(selection: Binding(get: { store.data.settings.language }, set: { v in store.updateSettings { $0.language = v } })) {
-                        ForEach(AppLanguage.allCases, id: \.self) { Text(Lang.name($0)).tag($0) }
-                    } label: { Label(L("Язык"), systemImage: "globe") }
-                    Toggle(isOn: Binding(get: { store.data.settings.haptics }, set: { v in store.updateSettings { $0.haptics = v } })) {
-                        Label(L("Тактильный отклик"), systemImage: "hand.tap")
+                    group {
+                        link(L("Кошельки"), "wallet.pass", value: "\(data.activeWallets.count)", id: "more-wallets") { WalletsView() }
+                        link(L("Запланированные операции"), "clock.arrow.circlepath", value: data.recurring.isEmpty ? nil : "\(data.recurring.filter { $0.isActive }.count)", id: "more-scheduled") { ScheduledView() }
                     }
-                    Picker(selection: Binding(get: { store.data.settings.firstWeekday }, set: { v in store.updateSettings { $0.firstWeekday = v } })) {
-                        Text(L("Понедельник")).tag(2)
-                        Text(L("Воскресенье")).tag(1)
-                    } label: { Label(L("Начало недели"), systemImage: "calendar") }
+                    group {
+                        link(L("Язык"), "globe", value: Lang.name(data.settings.language), id: "more-language") { LanguageView() }
+                        link(L("Оформление"), "circle.lefthalf.filled", value: themeName(data.settings.theme), id: "more-appearance") { AppearanceView() }
+                    }
+                    group {
+                        link(L("Экспорт и импорт"), "arrow.up.arrow.down.circle", value: nil, id: "more-data") { DataTransferView() }
+                        link(L("Резервная копия"), "externaldrive", value: nil, id: "more-backup") { BackupView() }
+                        link(L("AI-ассистент"), "sparkles", value: Keychain.hasKey ? nil : L("нет ключа"), id: "more-ai") { AISettingsView() }
+                    }
+                    Text("WorkFlow Spend " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") + " · " + "\(data.transactions.count) " + L("операций"))
+                        .font(.system(size: 13)).foregroundStyle(Palette.textTertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 4)
                 }
-                Section(L("Данные")) {
-                    NavigationLink { DataTransferView() } label: { Label(L("Экспорт и импорт CSV"), systemImage: "arrow.up.arrow.down.circle") }
-                        .accessibilityIdentifier("more-data")
-                    NavigationLink { BackupView() } label: { Label(L("Резервная копия"), systemImage: "externaldrive.badge.checkmark") }
-                }
-                Section {
-                    LabeledContent(L("Операций"), value: "\(store.data.transactions.count)")
-                    LabeledContent(L("Версия"), value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                } footer: {
-                    Text(L("Все данные хранятся только на этом iPhone. Делайте резервные копии в «Файлы» или iCloud Drive."))
+                .padding(.horizontal, 16)
+            }
+            .scrollIndicators(.hidden)
+            .background(Palette.background)
+            .tabBarSafeArea()
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    func themeName(_ t: AppTheme) -> String {
+        switch t {
+        case .system: return L("Системная")
+        case .light: return L("Светлая")
+        case .dark: return L("Тёмная")
+        }
+    }
+
+    func group<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        VStack(spacing: 0) { content() }
+            .padding(.vertical, 8)
+            .spendCard()
+    }
+
+    func link<D: View>(_ title: String, _ icon: String, value: String?, id: String, @ViewBuilder destination: @escaping () -> D) -> some View {
+        NavigationLink { destination() } label: {
+            HStack(spacing: 16) {
+                Image(systemName: icon).font(.system(size: 20)).frame(width: 28).foregroundStyle(Color.primary)
+                Text(title).font(.system(size: 18)).foregroundStyle(Color.primary)
+                Spacer()
+                if let value { Text(value).font(.system(size: 17)).foregroundStyle(Palette.textSecondary) }
+                Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 60)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+    }
+}
+
+struct LanguageView: View {
+    @Environment(Store.self) private var store
+    var body: some View {
+        List {
+            ForEach(AppLanguage.allCases, id: \.self) { l in
+                Button {
+                    store.updateSettings { $0.language = l }
+                } label: {
+                    HStack {
+                        Text(Lang.name(l)).foregroundStyle(Color.primary)
+                        Spacer()
+                        if store.data.settings.language == l { Image(systemName: "checkmark").foregroundStyle(Palette.accent) }
+                    }
                 }
             }
-            .tabBarSafeArea()
-            .navigationTitle(L("Ещё"))
-            .toolbar { ToolbarItem(placement: .topBarLeading) { AssistantToolbarButton(context: "The user is on the settings screen.") } }
         }
+        .navigationTitle(L("Язык"))
+    }
+}
+
+struct AppearanceView: View {
+    @Environment(Store.self) private var store
+    var body: some View {
+        let s = store.data.settings
+        Form {
+            Picker(L("Тема"), selection: Binding(get: { s.theme }, set: { v in store.updateSettings { $0.theme = v } })) {
+                Text(L("Системная")).tag(AppTheme.system)
+                Text(L("Светлая")).tag(AppTheme.light)
+                Text(L("Тёмная")).tag(AppTheme.dark)
+            }
+            .pickerStyle(.inline)
+            Section {
+                Toggle(L("Тактильный отклик"), isOn: Binding(get: { s.haptics }, set: { v in store.updateSettings { $0.haptics = v } }))
+                Picker(L("Начало недели"), selection: Binding(get: { s.firstWeekday }, set: { v in store.updateSettings { $0.firstWeekday = v } })) {
+                    Text(L("Понедельник")).tag(2)
+                    Text(L("Воскресенье")).tag(1)
+                }
+            }
+        }
+        .navigationTitle(L("Оформление"))
     }
 }
 
@@ -63,61 +127,176 @@ struct CategoriesView: View {
     @State private var kind: TxKind = .expense
     @State private var editing: FinCategory?
     @State private var creating = false
-    @State private var deleting: FinCategory?
+    @State private var reordering = false
 
     var body: some View {
         let cats = store.data.categories(of: kind)
-        List {
-            Picker("", selection: $kind.animation(.snappy)) {
-                Text(L("Расходы")).tag(TxKind.expense)
-                Text(L("Доходы")).tag(TxKind.income)
-            }
-            .pickerStyle(.segmented)
-            .listRowBackground(Color.clear)
-            Section {
-                ForEach(cats) { c in
-                    Button { editing = c } label: {
-                        HStack(spacing: 12) {
-                            CategoryIconView(category: c, size: 36)
-                            Text(c.name).foregroundStyle(.primary)
-                            Spacer()
-                            Text("\(store.data.transactions.filter { $0.categoryID == c.id }.count)").foregroundStyle(.secondary).font(.footnote)
+        let archived = store.data.categories.filter { $0.kind == kind && $0.isArchived }
+        Group {
+            if reordering {
+                List {
+                    ForEach(cats) { c in
+                        HStack(spacing: 12) { CategoryIconView(category: c, size: 34); Text(c.name) }
+                    }
+                    .onMove { from, to in
+                        var arr = cats
+                        arr.move(fromOffsets: from, toOffset: to)
+                        let muts = arr.enumerated().map { (i, c) -> Mutation in var cc = c; cc.sortOrder = i + 1; return .upsertCategory(cc) }
+                        store.perform(.batch(muts), label: L("Порядок категорий"), toast: false)
+                    }
+                }
+                .environment(\.editMode, .constant(.active))
+            } else {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        KindSegment(kind: $kind, haptics: store.data.settings.haptics)
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 16) {
+                            ForEach(cats) { c in
+                                Button { editing = c } label: {
+                                    VStack(spacing: 7) {
+                                        CategoryIconView(category: c, size: 68, style: .white)
+                                        Text(c.name).font(.system(size: 14)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.75)
+                                    }
+                                }
+                                .buttonStyle(PressableStyle(scale: 0.9))
+                            }
+                            Button { creating = true } label: {
+                                VStack(spacing: 7) {
+                                    Image(systemName: "plus").font(.system(size: 26)).foregroundStyle(Palette.accent)
+                                        .frame(width: 68, height: 68).background(Palette.accent.opacity(0.16), in: Circle())
+                                    Text(L("Создать категорию")).font(.system(size: 14)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.7)
+                                }
+                            }
+                            .buttonStyle(PressableStyle(scale: 0.9))
+                            .accessibilityIdentifier("add-category")
+                        }
+                        if !archived.isEmpty {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(L("В архиве")).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.textSecondary).padding(16)
+                                ForEach(archived) { c in
+                                    HStack {
+                                        CategoryIconView(category: c, size: 32)
+                                        Text(c.name).foregroundStyle(Palette.textSecondary)
+                                        Spacer()
+                                        Button(L("Вернуть")) { var cc = c; cc.isArchived = false; store.perform(.upsertCategory(cc), label: L("Категория восстановлена")) }
+                                    }
+                                    .padding(.horizontal, 16).padding(.vertical, 8)
+                                }
+                            }
+                            .padding(.bottom, 8)
+                            .spendCard(radius: 24)
                         }
                     }
-                    .swipeActions {
-                        Button(role: .destructive) { deleting = c } label: { Label(L("Удалить"), systemImage: "trash") }
-                    }
+                    .padding(16)
                 }
-                .onMove { from, to in
-                    var arr = cats
-                    arr.move(fromOffsets: from, toOffset: to)
-                    let muts = arr.enumerated().map { (i, c) -> Mutation in var cc = c; cc.sortOrder = i + 1; return .upsertCategory(cc) }
-                    store.perform(.batch(muts), label: L("Порядок категорий"), toast: false)
-                }
-            }
-            let archived = store.data.categories.filter { $0.kind == kind && $0.isArchived }
-            if !archived.isEmpty {
-                Section(L("В архиве")) {
-                    ForEach(archived) { c in
-                        HStack {
-                            CategoryIconView(category: c, size: 30)
-                            Text(c.name).foregroundStyle(.secondary)
-                            Spacer()
-                            Button(L("Вернуть")) { var cc = c; cc.isArchived = false; store.perform(.upsertCategory(cc), label: L("Категория восстановлена")) }
-                        }
-                    }
-                }
+                .background(Palette.background)
             }
         }
+        .tabBarSafeArea()
         .navigationTitle(L("Категории"))
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { Button { creating = true } label: { Image(systemName: "plus") }.accessibilityIdentifier("add-category") }
-            ToolbarItem(placement: .topBarTrailing) { EditButton() }
-            ToolbarItem(placement: .topBarTrailing) { AssistantToolbarButton(context: "The user is managing categories.") }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(reordering ? L("Готово") : L("Порядок")) { withAnimation { reordering.toggle() } }
+            }
         }
         .sheet(item: $editing) { c in CategoryEditor(category: c, kind: c.kind) { _ in } }
         .sheet(isPresented: $creating) { CategoryEditor(category: nil, kind: kind) { _ in } }
-        .sheet(item: $deleting) { c in DeleteCategorySheet(category: c).presentationDetents([.medium]) }
+    }
+}
+
+// MARK: Labels
+
+struct LabelsView: View {
+    @Environment(Store.self) private var store
+    @State private var newName = ""
+    @State private var renaming: TxLabel?
+    @State private var renameText = ""
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    TextField(L("Новая метка"), text: $newName).onSubmit(add)
+                    Button(L("Добавить"), action: add).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            Section {
+                ForEach(store.data.sortedLabels) { l in
+                    let count = store.data.transactions.filter { $0.tags.contains(l.name) }.count
+                    Button { renaming = l; renameText = l.name } label: {
+                        HStack {
+                            Image(systemName: "tag").foregroundStyle(Palette.textSecondary)
+                            Text(l.name).foregroundStyle(Color.primary)
+                            Spacer()
+                            Text("\(count)").foregroundStyle(Palette.textSecondary)
+                        }
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) { store.perform(.deleteLabel(id: l.id), label: L("Метка удалена: ") + l.name) } label: { Label(L("Удалить"), systemImage: "trash") }
+                    }
+                }
+                .onMove { from, to in
+                    var arr = store.data.sortedLabels
+                    arr.move(fromOffsets: from, toOffset: to)
+                    store.perform(.batch(arr.enumerated().map { (i, l) -> Mutation in var ll = l; ll.sortOrder = i + 1; return .upsertLabel(ll) }),
+                                  label: L("Порядок меток"), toast: false)
+                }
+            } footer: { Text(L("Метки показываются под описанием при добавлении операции. Переименование меняет метку во всех операциях.")) }
+        }
+        .tabBarSafeArea()
+        .navigationTitle(L("Метки"))
+        .toolbar { EditButton() }
+        .alert(L("Переименовать метку"), isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField(L("Название"), text: $renameText)
+            Button(L("Отмена"), role: .cancel) { renaming = nil }
+            Button(L("Сохранить")) {
+                if var l = renaming { l.name = renameText; store.perform(.upsertLabel(l), label: L("Метка переименована")) }
+                renaming = nil
+            }
+        }
+    }
+
+    func add() {
+        let n = newName.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        if store.perform(.upsertLabel(TxLabel(name: n)), label: L("Метка создана: ") + n) { newName = "" }
+    }
+}
+
+// MARK: Scheduled
+
+struct ScheduledView: View {
+    @Environment(Store.self) private var store
+    @State private var showAdd = false
+
+    var body: some View {
+        let rules = store.data.recurring.sorted { $0.nextDate < $1.nextDate }
+        List {
+            if rules.isEmpty {
+                Text(L("Нет запланированных операций. Выберите «Повтор» при добавлении операции.")).foregroundStyle(Palette.textSecondary)
+            }
+            ForEach(rules) { r in
+                let t = r.template
+                HStack(spacing: 12) {
+                    TxIcon(tx: t, size: 40)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(t.isTransfer ? L("Перевод") : (store.data.category(t.categoryID)?.name ?? "—"))
+                        Text(AddTransactionView.frequencyName(r.frequency) + " · " + L("след.") + " " + Fmt.fullDate(r.nextDate))
+                            .font(.footnote).foregroundStyle(Palette.textSecondary)
+                        if !t.note.isEmpty { Text(t.note).font(.footnote).foregroundStyle(Palette.textSecondary) }
+                    }
+                    Spacer()
+                    Text(Fmt.txCode(t)).monospacedDigit().foregroundStyle(r.isActive ? Color.primary : Palette.textTertiary)
+                }
+                .swipeActions {
+                    Button(role: .destructive) { store.perform(.deleteRecurring(id: r.id), label: L("Повтор отключён")) } label: { Label(L("Удалить"), systemImage: "trash") }
+                }
+            }
+        }
+        .tabBarSafeArea()
+        .navigationTitle(L("Запланированные"))
+        .toolbar { Button { showAdd = true } label: { Image(systemName: "plus") } }
+        .sheet(isPresented: $showAdd) { AddTransactionView(editing: nil) }
     }
 }
 
@@ -442,6 +621,7 @@ struct DataTransferView: View {
     @State private var planName = ""
     @State private var error: String?
     @State private var exportPeriodOnly = false
+    @State private var parsing = false
 
     var body: some View {
         Form {
@@ -455,16 +635,19 @@ struct DataTransferView: View {
                 } label: { Label(L("Экспорт в CSV"), systemImage: "square.and.arrow.up") }
                 .accessibilityIdentifier("export-csv")
             } header: { Text(L("Экспорт")) } footer: {
-                Text(L("Колонки: Date, Type, Amount, Currency, Category, Wallet, Note. Файл открывается в Excel/Numbers и импортируется обратно."))
+                Text(L("Колонки: Date, Type, Amount, Currency, Category, Wallet, Note, Labels. Файл открывается в Excel/Numbers и импортируется обратно."))
             }
             Section {
-                Button { importing = true } label: { Label(L("Импорт из CSV"), systemImage: "square.and.arrow.down") }
+                Button { importing = true } label: {
+                    HStack { Label(L("Импорт из CSV"), systemImage: "square.and.arrow.down"); Spacer(); if parsing { ProgressView() } }
+                }
             } header: { Text(L("Импорт")) } footer: {
-                Text(L("Поддерживаются файлы этого приложения и экспорт Spendee (Date, Wallet, Type, Category name, Amount, Currency, Note, Labels). Повторный импорт того же файла не создаёт дублей."))
+                Text(L("Поддерживаются файлы этого приложения и экспорт Spendee (Date, Wallet, Type, Category name, Amount, Currency, Note, Labels). Перед импортом автоматически создаётся резервная копия. Повторный импорт того же файла не создаёт дублей."))
             }
             if let e = error { Text(e).foregroundStyle(Palette.expense) }
         }
         .navigationTitle(L("Экспорт и импорт"))
+        .tabBarSafeArea()
         .sheet(item: $share) { u in ShareSheet(items: [u.url]) }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.commaSeparatedText, .plainText, .text, .data]) { result in
             switch result {
@@ -475,7 +658,12 @@ struct DataTransferView: View {
                     let d = try Data(contentsOf: url)
                     let text = String(data: d, encoding: .utf8) ?? String(data: d, encoding: .windowsCP1251) ?? ""
                     planName = url.lastPathComponent
-                    plan = CSVExchange.plan(csv: text, into: store.data, fallbackCategoryName: L("Другое"))
+                    let snapshot = store.data
+                    parsing = true
+                    Task.detached {
+                        let p = CSVExchange.plan(csv: text, into: snapshot, fallbackCategoryName: "Other")
+                        await MainActor.run { plan = p; parsing = false }
+                    }
                 } catch { self.error = error.localizedDescription }
             case .failure(let e): error = e.localizedDescription
             }
@@ -491,42 +679,63 @@ struct ImportPreview: View {
     let plan: CSVExchange.ImportPlan
     let fileName: String
     var done: () -> Void
+    @State private var removeUnused = true
+    @State private var showMonths = false
 
     var body: some View {
+        let src = plan.sourceTotals, dst = plan.plannedTotals
+        let ok = src == dst && plan.mismatchedMonths.isEmpty
+        let unusedCats = plan.unusedCategoryIDs.compactMap { store.data.category($0)?.name }
+        let unusedWallets = plan.unusedWalletIDs.compactMap { store.data.wallet($0)?.name }
         NavigationStack {
             List {
                 Section(fileName) {
                     LabeledContent(L("Строк в файле"), value: "\(plan.rowCount)")
                     LabeledContent(L("Новых операций"), value: "\(plan.transactions.count)")
                     LabeledContent(L("Пропущено дублей"), value: "\(plan.duplicates)")
+                    if !plan.errors.isEmpty { LabeledContent(L("Строк с ошибками"), value: "\(plan.errors.count)") }
                     if plan.pairedTransfers > 0 { LabeledContent(L("Переводы между кошельками"), value: "\(plan.pairedTransfers)") }
                     if plan.unpairedTransfers > 0 { LabeledContent(L("Переводы без пары (как доход/расход)"), value: "\(plan.unpairedTransfers)") }
                     LabeledContent(L("Новых категорий"), value: "\(plan.newCategories.count)")
+                    LabeledContent(L("Новых меток"), value: "\(plan.newLabels.count)")
                     LabeledContent(L("Новых кошельков"), value: "\(plan.newWallets.count)")
-                    if !plan.transactions.isEmpty {
-                        let inc = plan.transactions.filter { $0.kind == .income }.count
-                        let exp = plan.transactions.filter { $0.kind == .expense }.count
-                        LabeledContent(L("Доходов / расходов"), value: "\(inc) / \(exp)")
-                    }
                 }
                 Section {
-                    let src = plan.sourceTotals, dst = plan.plannedTotals
                     let currencies = Set(src.income.keys).union(src.expense.keys).sorted()
                     ForEach(currencies, id: \.self) { c in
-                        LabeledContent(L("Доходы") + " " + c, value: Fmt.money(src.income[c] ?? 0, c))
-                        LabeledContent(L("Расходы") + " " + c, value: Fmt.money(src.expense[c] ?? 0, c))
+                        LabeledContent(L("Доходы") + " " + c, value: Fmt.code(src.income[c] ?? 0, c))
+                        LabeledContent(L("Расходы") + " " + c, value: Fmt.code(src.expense[c] ?? 0, c))
                     }
                     if plan.duplicates == 0 {
-                        Label(src == dst ? L("Суммы совпадают с файлом") : L("Суммы НЕ совпадают с файлом"),
-                              systemImage: src == dst ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(src == dst ? Palette.income : Palette.expense)
+                        Label(ok ? L("Суммы совпадают с файлом, в том числе по каждому месяцу") : L("Суммы НЕ совпадают с файлом: ") + plan.mismatchedMonths.joined(separator: ", "),
+                              systemImage: ok ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(ok ? Palette.income : Palette.expense)
+                    }
+                    DisclosureGroup(L("По месяцам"), isExpanded: $showMonths) {
+                        ForEach(plan.sourceByMonth.keys.sorted().reversed(), id: \.self) { m in
+                            let t = plan.sourceByMonth[m]!
+                            let cur = t.expense.keys.first ?? t.income.keys.first ?? store.data.settings.baseCurrency
+                            HStack {
+                                Text(m).monospacedDigit()
+                                Spacer()
+                                Text("+" + Fmt.code(t.income[cur] ?? 0, cur)).foregroundStyle(Palette.income).font(.footnote.monospacedDigit())
+                                Text("−" + Fmt.code(t.expense[cur] ?? 0, cur)).foregroundStyle(Palette.expense).font(.footnote.monospacedDigit())
+                            }
+                        }
                     }
                 } header: { Text(L("Сверка с файлом (без переводов)")) }
+                if !unusedCats.isEmpty || !unusedWallets.isEmpty {
+                    Section {
+                        Toggle(L("Убрать неиспользуемые стандартные категории и кошельки"), isOn: $removeUnused)
+                    } footer: {
+                        Text((unusedCats + unusedWallets).joined(separator: ", "))
+                    }
+                }
                 if !plan.newCategories.isEmpty {
                     Section(L("Будут созданы категории")) { Text(plan.newCategories.map { $0.name }.joined(separator: ", ")).font(.footnote) }
                 }
-                if !plan.newWallets.isEmpty {
-                    Section(L("Будут созданы кошельки")) { Text(plan.newWallets.map { "\($0.name) (\($0.currency))" }.joined(separator: ", ")).font(.footnote) }
+                if !plan.newLabels.isEmpty {
+                    Section(L("Будут созданы метки")) { Text(plan.newLabels.map { $0.name }.joined(separator: ", ")).font(.footnote) }
                 }
                 if !plan.errors.isEmpty {
                     Section(L("Ошибки (строки пропущены)")) {
@@ -542,9 +751,19 @@ struct ImportPreview: View {
                 ToolbarItem(placement: .cancellationAction) { Button(L("Отмена"), action: done) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(L("Импортировать")) {
-                        if store.perform(plan.mutation, label: L("Импортировано операций: ") + "\(plan.transactions.count)") { done() }
+                        do {
+                            let backup = try store.autoBackup(reason: "import")
+                            if store.perform(plan.mutation(removingUnused: removeUnused), label: L("Импортировано операций: ") + "\(plan.transactions.count)", toast: false) {
+                                store.show(L("Импортировано операций: ") + "\(plan.transactions.count). " + L("Копия до импорта: ") + backup, canUndo: true)
+                                withAnimation { store.selectedTab = .home }
+                                done()
+                            }
+                        } catch {
+                            store.show(L("Не удалось сделать копию перед импортом: ") + error.localizedDescription, canUndo: false, isError: true)
+                        }
                     }
                     .disabled(plan.transactions.isEmpty)
+                    .accessibilityIdentifier("import-confirm")
                 }
             }
         }
@@ -587,7 +806,7 @@ struct BackupView: View {
             if case .success(let url) = result {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
-                do { pending = try BackupFile.decode(Data(contentsOf: url)) } catch { self.error = L("Это не файл резервной копии Groshi") }
+                do { pending = try BackupFile.decode(Data(contentsOf: url)) } catch { self.error = L("Это не файл резервной копии WorkFlow Spend") }
             }
         }
         .confirmationDialog(L("Заменить текущие данные?"), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {

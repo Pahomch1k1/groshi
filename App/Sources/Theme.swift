@@ -23,14 +23,39 @@ extension Color {
     }
 }
 
+extension Color {
+    /// Light/dark pair.
+    static func dynamic(_ light: String, _ dark: String) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(Color(hex: dark)) : UIColor(Color(hex: light)) })
+    }
+}
+
+/// Spendee-like visual tokens.
 enum Palette {
-    static let accent = Color(hex: "#1EC28B")
-    static let income = Color(hex: "#1EC28B")
-    static let expense = Color(hex: "#F0645F")
-    static let background = Color(uiColor: .systemGroupedBackground)
-    static let card = Color(uiColor: .secondarySystemGroupedBackground)
-    static let bubble = Color(uiColor: .tertiarySystemFill)
+    static let accent = Color(hex: "#1BC47D")
+    static let income = Color(hex: "#1BC47D")
+    static let expense = Color(hex: "#F25C54")
+    /// Light grey app background.
+    static let background = Color.dynamic("#F4F5F7", "#000000")
+    /// White cards.
+    static let card = Color.dynamic("#FFFFFF", "#1C1C1E")
+    /// Soft grey fills (chips, keypad on grey, inactive circles).
+    static let bubble = Color.dynamic("#EEF0F3", "#2C2C2E")
+    static let textSecondary = Color.dynamic("#6B7785", "#9AA3AE")
+    static let textTertiary = Color.dynamic("#A3ACB6", "#6B7280")
+    static let shadow = Color.black.opacity(0.06)
     static func amount(_ kind: TxKind) -> Color { kind == .income ? income : .primary }
+
+    /// Pastel version of a category colour (for circles and backgrounds).
+    static func pastel(_ hex: String, _ opacity: Double = 0.18) -> Color { Color(hex: hex).opacity(opacity) }
+}
+
+extension View {
+    /// White rounded card with Spendee's soft shadow.
+    func spendCard(radius: CGFloat = 28) -> some View {
+        background(Palette.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .shadow(color: Palette.shadow, radius: 14, y: 4)
+    }
 }
 
 enum Haptics {
@@ -49,28 +74,6 @@ enum Haptics {
     static func error(enabled: Bool = true) {
         guard enabled else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.error)
-    }
-}
-
-/// Card container used across screens.
-struct Card<Content: View>: View {
-    var padding: CGFloat = 16
-    @ViewBuilder var content: Content
-    var body: some View {
-        content
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-}
-
-/// Scale-down press effect for buttons.
-struct PressableStyle: ButtonStyle {
-    var scale: CGFloat = 0.94
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -96,6 +99,33 @@ enum Fmt {
         return MoneyMath.format(t.signedMinor, currency: t.currency, showSign: true)
     }
 
+    /// Spendee list style: "UAH 6 146", "−UAH 5 500" (code first, fraction only when non-zero).
+    static func code(_ minor: Int64, _ currency: String, sign: Bool = false) -> String {
+        let body = MoneyMath.format(abs(minor), currency: currency, symbol: false)
+        let s = minor < 0 ? "−" : (sign && minor > 0 ? "+" : "")
+        return s + currency + "\u{00A0}" + body
+    }
+
+    /// Transaction amount in lists: expenses "−UAH 278", income "+UAH 13 387", transfers "UAH 500".
+    static func txCode(_ t: Txn) -> String {
+        t.isTransfer ? code(t.amountMinor, t.currency) : code(t.signedMinor, t.currency, sign: true)
+    }
+
+    /// Detail/entry style: "−1 000 UAH".
+    static func trailingCode(_ minor: Int64, _ currency: String, sign: Bool = false) -> String {
+        let body = MoneyMath.format(abs(minor), currency: currency, symbol: false)
+        let s = minor < 0 ? "−" : (sign && minor > 0 ? "+" : "")
+        return s + body + " " + currency
+    }
+
+    /// Axis labels: 251k, 125.5k.
+    static func compact(_ minor: Int64, _ currency: String) -> String {
+        let v = Double(minor) / 100
+        if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000).replacingOccurrences(of: ".0M", with: "M") }
+        if v >= 1000 { let s = String(format: "%.1fk", v / 1000); return s.replacingOccurrences(of: ".0k", with: "k") }
+        return String(Int(v))
+    }
+
     /// "Карта → Наличные"
     static func route(_ t: Txn, _ data: AppData) -> String {
         (data.wallet(t.walletID)?.name ?? "—") + " → " + (t.toWalletID.flatMap { data.wallet($0)?.name } ?? "—")
@@ -107,7 +137,7 @@ enum Fmt {
         let f = DateFormatter()
         f.locale = Lang.locale
         let sameYear = calendar.component(.year, from: day) == calendar.component(.year, from: Date())
-        f.setLocalizedDateFormatFromTemplate(sameYear ? "EEEE d MMMM" : "d MMMM yyyy")
+        f.setLocalizedDateFormatFromTemplate(sameYear ? "MMMM d" : "MMMM d yyyy")
         return f.string(from: day).capitalizedFirst
     }
 

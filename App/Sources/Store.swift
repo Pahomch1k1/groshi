@@ -26,7 +26,7 @@ final class Store {
 
     init(directory: URL? = nil) {
         let base = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Groshi", isDirectory: true)
+            .appendingPathComponent("Groshi", isDirectory: true) // keep: renaming would orphan existing data
         // Exclude nothing from iCloud/iTunes backup: the data must survive device restores.
         fileStore = FileStore(directory: base)
         iconsDirectory = base.appendingPathComponent("Icons", isDirectory: true)
@@ -53,13 +53,41 @@ final class Store {
         }
         let cal = Period.calendar(firstWeekday: loaded.settings.firstWeekday)
         Lang.current = loaded.settings.language
+        let created = Recurrence.catchUp(&loaded, now: Date(), calendar: cal)
         data = loaded
         startupNotice = notice
         period = Period.containing(Date(), kind: .month, calendar: cal)
-        if fresh { persist() }
+        if fresh || created > 0 { persist() }
     }
 
     var calendar: Calendar { Period.calendar(firstWeekday: data.settings.firstWeekday) }
+
+    /// Creates due recurring transactions (on launch and whenever the app becomes active).
+    func catchUpRecurring() {
+        var copy = data
+        if Recurrence.catchUp(&copy, now: Date(), calendar: calendar) > 0 {
+            withAnimation(.snappy) { data = copy }
+            persist()
+        }
+    }
+
+    /// Persistent backups folder (visible in the Files app under "On My iPhone › WorkFlow Spend").
+    var backupsDirectory: URL {
+        let d = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Backups", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    /// Full backup written before an import or a restore. Returns the file name.
+    @discardableResult
+    func autoBackup(reason: String) throws -> String {
+        let url = try makeBackup()
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd_HHmmss"
+        let dest = backupsDirectory.appendingPathComponent("WorkFlowSpend-before-\(reason)-\(f.string(from: Date())).json")
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.copyItem(at: url, to: dest)
+        return dest.lastPathComponent
+    }
 
     // MARK: Changes
 
@@ -157,12 +185,13 @@ final class Store {
             if case .image(let n) = c.icon, let d = try? Data(contentsOf: iconURL(n)) { icons[n] = d.base64EncodedString() }
         }
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd_HHmm"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Groshi-backup-\(f.string(from: Date())).json")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("WorkFlowSpend-backup-\(f.string(from: Date())).json")
         try BackupFile(data: data, icons: icons).encoded().write(to: url, options: .atomic)
         return url
     }
 
     func restore(_ backup: BackupFile) throws {
+        try autoBackup(reason: "restore")
         for (name, b64) in backup.icons {
             if let d = Data(base64Encoded: b64) { try? d.write(to: iconURL(name), options: .atomic) }
         }
@@ -171,10 +200,10 @@ final class Store {
 
     func exportCSV(_ txs: [Txn]? = nil) throws -> URL {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Groshi-\(f.string(from: Date())).csv")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("WorkFlowSpend-\(f.string(from: Date())).csv")
         try CSVExchange.export(data, transactions: txs).write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 }
 
-enum AppTab: Hashable { case home, overview, assistant, more }
+enum AppTab: Hashable { case home, overview, more }

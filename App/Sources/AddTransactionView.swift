@@ -1,263 +1,499 @@
 import SwiftUI
 import GroshiCore
 
-/// Single-screen entry: type switch, big amount, category grid, wallet/date/note, keypad.
+/// Spendee-style entry: 1) pick a category on a grey sheet, 2) the sheet takes the category's colour and
+/// a calculator replaces the grid. Editing opens directly on step 2.
 struct AddTransactionView: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     let editing: Txn?
 
+    enum Stage { case category, amount }
+    @State private var stage: Stage = .category
     @State private var kind: TxKind = .expense
-    @State private var amountText = ""
-    @State private var currency = "UAH"
     @State private var categoryID: UUID?
+    @State private var expr = ""
+    @State private var currency = "UAH"
     @State private var walletID: UUID?
-    @State private var date = Date()
-    @State private var note = ""
-    @State private var shake = 0
-    @State private var showNewCategory = false
-    @FocusState private var noteFocused: Bool
-    @FocusState private var toAmountFocused: Bool
-    @State private var loaded = false
-    // Transfer
     @State private var toWalletID: UUID?
     @State private var toAmountText = ""
-
-    var keyboardUp: Bool { noteFocused || toAmountFocused }
+    @State private var date = Date()
+    @State private var note = ""
+    @State private var tags: [String] = []
+    @State private var frequency: Frequency?
+    @State private var showMenu = false
+    @State private var menuKind: TxKind = .expense
+    @State private var showDate = false
+    @State private var showNewCategory = false
+    @State private var showNewLabel = false
+    @State private var newLabel = ""
+    @State private var shake = 0
+    @State private var loaded = false
+    @FocusState private var noteFocused: Bool
+    @FocusState private var creditFocused: Bool
 
     init(editing: Txn?) { self.editing = editing }
 
-    var amountMinor: Int64? {
-        guard !amountText.isEmpty else { return nil }
-        return MoneyMath.parseMinor(amountText, currency: currency)
-    }
+    var category: FinCategory? { categoryID.flatMap { store.data.category($0) } }
+    var amountMinor: Int64 { Calculator.minor(expr, currency: currency) ?? 0 }
+    var tint: Color { kind == .transfer ? Color(hex: "#8FA3BC") : Color(hex: category?.colorHex ?? "#A3ACB6") }
+    var haptics: Bool { store.data.settings.haptics }
 
     var body: some View {
-        let data = store.data
-        let cats = data.categories(of: kind)
-        NavigationStack {
+        ZStack(alignment: .top) {
+            background.ignoresSafeArea()
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(spacing: 16) {
-                        Picker("", selection: $kind.animation(.snappy)) {
-                            Text(L("Расход")).tag(TxKind.expense)
-                            Text(L("Доход")).tag(TxKind.income)
-                            Text(L("Перевод")).tag(TxKind.transfer)
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("kind-picker")
-
-                        amountDisplay
-
-                        if kind == .transfer {
-                            transferCard
-                                .transition(.opacity.combined(with: .scale(scale: 0.97)))
-                        } else {
-                            categoryGrid(cats)
-                                .gesture(DragGesture(minimumDistance: 40).onEnded { v in
-                                    if abs(v.translation.width) > abs(v.translation.height) * 2 {
-                                        withAnimation(.snappy) { kind = v.translation.width < 0 ? .income : .expense }
-                                    }
-                                })
-                                .transition(.opacity.combined(with: .scale(scale: 0.97)))
-                        }
-
-                        detailsCard
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                if !keyboardUp {
-                    Keypad(text: $amountText, haptics: data.settings.haptics, onSave: save)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
-            .background(Palette.background)
-            .navigationTitle(editing == nil ? L("Новая операция") : L("Изменить операцию"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(L("Отмена")) { dismiss() } }
-                ToolbarItem(placement: .principal) { EmptyView() }
-                ToolbarItem(placement: .topBarTrailing) { AssistantToolbarButton(context: editing.map { "Пользователь редактирует операцию id \(String($0.id.uuidString.prefix(8)).lowercased())" }) }
-                ToolbarItem(placement: .keyboard) { HStack { Spacer(); Button(L("Готово")) { noteFocused = false; toAmountFocused = false } } }
-            }
-            .animation(.snappy, value: keyboardUp)
-            .onAppear(perform: load)
-            .onChange(of: kind) { _, _ in
-                if let id = categoryID, store.data.category(id)?.kind != kind { categoryID = nil }
-                if kind == .transfer && (toWalletID == nil || toWalletID == walletID) {
-                    toWalletID = store.data.activeWallets.first { $0.id != walletID }?.id
-                }
-            }
-            .onChange(of: walletID) { _, new in
-                if let w = new.flatMap({ store.data.wallet($0) }), amountText.isEmpty || editing == nil { currency = w.currency }
-                if kind == .transfer && toWalletID == new { toWalletID = store.data.activeWallets.first { $0.id != new }?.id }
-            }
-            .sheet(isPresented: $showNewCategory) {
-                CategoryEditor(category: nil, kind: kind) { created in categoryID = created.id }
-            }
-        }
-        .presentationDragIndicator(.visible)
-    }
-
-    var amountDisplay: some View {
-        VStack(spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if kind == .transfer {
-                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 30, weight: .bold)).foregroundStyle(.secondary)
+                topBar
+                headerBlock
+                    .padding(.top, 2)
+                descriptionCard
+                    .padding(.horizontal, 20)
+                    .padding(.top, 22)
+                if stage == .category {
+                    categoryGrid
+                        .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .bottom).combined(with: .opacity)))
                 } else {
-                    Text(kind == .expense ? "−" : "+")
-                        .foregroundStyle(kind == .expense ? Palette.expense : Palette.income)
+                    amountStage
+                        .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                 }
-                Text(Self.grouped(amountText))
-                    .contentTransition(.numericText())
-                    .accessibilityIdentifier("amount-display")
-                Menu {
-                    ForEach(Currencies.common, id: \.self) { c in
-                        Button(c + " " + Currencies.symbol(c)) { currency = c }
-                    }
-                } label: {
-                    Text(Currencies.symbol(currency))
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityIdentifier("currency-menu")
             }
-            .font(.system(size: 46, weight: .bold, design: .rounded).monospacedDigit())
-            .lineLimit(1).minimumScaleFactor(0.5)
-            .modifier(ShakeEffect(shakes: CGFloat(shake)))
-            .animation(.snappy(duration: 0.18), value: amountText)
-            if currency != store.data.settings.baseCurrency, let m = amountMinor,
-               let c = store.data.settings.converter.convert(m, from: currency, to: store.data.settings.baseCurrency) {
-                Text("≈ " + Fmt.money(c, store.data.settings.baseCurrency)).font(.footnote).foregroundStyle(.secondary)
+            if showMenu {
+                Color.black.opacity(0.001).ignoresSafeArea().onTapGesture { closeMenu() }
+                categoryMenu
+                    .padding(.top, 70)
+                    .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: stage)
+        .animation(.easeInOut(duration: 0.35), value: categoryID)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showMenu)
+        .presentationDetents([.large])
+        .presentationCornerRadius(38)
+        .presentationBackground(.clear)
+        .onAppear(perform: load)
+        .sheet(isPresented: $showNewCategory) {
+            CategoryEditor(category: nil, kind: kind == .income ? .income : .expense) { c in pick(c) }
+        }
+        .sheet(isPresented: $showDate) {
+            DateSheet(date: $date).presentationDetents([.medium, .large])
+        }
+        .alert(L("Новая метка"), isPresented: $showNewLabel) {
+            TextField(L("Название"), text: $newLabel)
+            Button(L("Отмена"), role: .cancel) { newLabel = "" }
+            Button(L("Добавить")) {
+                let name = newLabel.trimmingCharacters(in: .whitespaces)
+                newLabel = ""
+                guard !name.isEmpty else { return }
+                if let existing = store.data.labelNamed(name) { toggleTag(existing.name); return }
+                if store.perform(.upsertLabel(TxLabel(name: name)), label: L("Метка создана: ") + name, toast: false) { toggleTag(name) }
+            }
+        }
     }
 
-    func categoryGrid(_ cats: [FinCategory]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 12) {
-            ForEach(cats) { c in
-                let on = categoryID == c.id
+    // MARK: Background & header
+
+    var background: some View {
+        ZStack {
+            Palette.background
+            if stage == .category {
+                LinearGradient(colors: [Color.dynamic("#DFE1E5", "#1C1C1E"), Palette.background], startPoint: .top, endPoint: .bottom)
+            } else {
+                LinearGradient(colors: [tint.opacity(0.55), tint.opacity(0.22), Palette.background], startPoint: .top, endPoint: .bottom)
+            }
+        }
+    }
+
+    var topBar: some View {
+        HStack {
+            CircleButton(systemImage: "xmark") { dismiss() }
+                .accessibilityIdentifier("add-close")
+            Spacer()
+            if stage == .amount && editing == nil {
                 Button {
-                    Haptics.select(enabled: store.data.settings.haptics)
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) { categoryID = c.id }
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { stage = .category }
                 } label: {
-                    VStack(spacing: 5) {
-                        CategoryIconView(category: c, size: 50)
-                            .overlay(Circle().strokeBorder(on ? Color(hex: c.colorHex) : .clear, lineWidth: 2.5).padding(-4))
-                            .scaleEffect(on ? 1.08 : 1)
-                        Text(c.name).font(.caption2).lineLimit(2).multilineTextAlignment(.center)
-                            .foregroundStyle(on ? .primary : .secondary)
-                            .frame(height: 28, alignment: .top)
+                    Image(systemName: "square.grid.2x2").font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary)
+                        .frame(width: 46, height: 46).background(Palette.card.opacity(0.92), in: Circle())
+                }
+                .buttonStyle(PressableStyle(scale: 0.9))
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+    }
+
+    var headerBlock: some View {
+        VStack(spacing: 8) {
+            Button {
+                guard stage == .amount else { return }
+                menuKind = kind == .income ? .income : .expense
+                Haptics.tap(enabled: haptics)
+                showMenu.toggle()
+            } label: {
+                VStack(spacing: 6) {
+                    Group {
+                        if stage == .category {
+                            CategoryPlaceholderIcon(size: 84)
+                        } else if kind == .transfer {
+                            TransferIcon(size: 84).background(Palette.card, in: Circle())
+                        } else {
+                            CategoryIconView(category: category, size: 84, style: .white)
+                        }
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                    if stage == .amount {
+                        HStack(spacing: 4) {
+                            Text(kind == .transfer ? L("Перевод") : (category?.name ?? ""))
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold))
+                        }
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Color.primary)
                     }
                 }
-                .buttonStyle(PressableStyle())
-                .accessibilityIdentifier("category-\(c.name)")
             }
-            Button { showNewCategory = true } label: {
-                VStack(spacing: 5) {
-                    Image(systemName: "plus").font(.title3.weight(.semibold)).frame(width: 50, height: 50)
-                        .background(Palette.bubble, in: Circle())
-                    Text(L("Новая")).font(.caption2).foregroundStyle(.secondary).frame(height: 28, alignment: .top)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("category-switch")
+
+            VStack(spacing: 2) {
+                if Calculator.hasOperator(expr) {
+                    Text(expr).font(.system(size: 18, weight: .medium).monospacedDigit()).foregroundStyle(Palette.textSecondary)
+                        .transition(.opacity)
                 }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(amountText)
+                        .font(.system(size: 54, weight: .bold).monospacedDigit())
+                        .contentTransition(.numericText())
+                        .accessibilityIdentifier("amount-display")
+                    Menu {
+                        ForEach(Currencies.common, id: \.self) { c in Button(c + "  " + Currencies.symbol(c)) { currency = c } }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text(currency).font(.system(size: 40, weight: .bold))
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.textSecondary)
+                        }
+                        .foregroundStyle(Color.primary)
+                    }
+                    .accessibilityIdentifier("currency-menu")
+                }
+                .lineLimit(1).minimumScaleFactor(0.5)
+                .modifier(ShakeEffect(shakes: CGFloat(shake)))
             }
-            .buttonStyle(PressableStyle())
+            .padding(.horizontal, 20)
+            .animation(.snappy(duration: 0.18), value: expr)
         }
-        .padding(14)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
-    var toWallet: Wallet? { toWalletID.flatMap { store.data.wallet($0) } }
-
-    /// From / to wallets and, for different currencies, the credited amount.
-    var transferCard: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Label(L("Откуда"), systemImage: "arrow.up.circle").foregroundStyle(.secondary)
-                Spacer()
-                Picker("", selection: $walletID) {
-                    ForEach(store.data.activeWallets) { w in Text("\(w.name) · \(w.currency)").tag(UUID?.some(w.id)) }
-                }
-                .labelsHidden()
-                .accessibilityIdentifier("transfer-from")
-            }
-            .padding(.vertical, 6)
-            Divider()
-            HStack {
-                Label(L("Куда"), systemImage: "arrow.down.circle").foregroundStyle(.secondary)
-                Spacer()
-                Picker("", selection: $toWalletID) {
-                    ForEach(store.data.activeWallets.filter { $0.id != walletID }) { w in Text("\(w.name) · \(w.currency)").tag(UUID?.some(w.id)) }
-                }
-                .labelsHidden()
-                .accessibilityIdentifier("transfer-to")
-            }
-            .padding(.vertical, 6)
-            if let to = toWallet, to.currency != currency {
-                Divider()
-                HStack {
-                    Label(L("Зачислено"), systemImage: "arrow.down.to.line").foregroundStyle(.secondary)
-                    Spacer()
-                    TextField(placeholderCredit(to), text: $toAmountText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .focused($toAmountFocused)
-                        .frame(maxWidth: 140)
-                        .accessibilityIdentifier("transfer-to-amount")
-                    Text(Currencies.symbol(to.currency)).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 10)
-            }
-            if store.data.activeWallets.count < 2 {
-                Text(L("Для перевода нужен второй кошелёк: «Ещё → Кошельки»."))
-                    .font(.footnote).foregroundStyle(.secondary).padding(.vertical, 8)
-            }
+    var amountText: String {
+        if expr.isEmpty { return "0" }
+        if Calculator.hasOperator(expr) {
+            return MoneyMath.format(amountMinor, currency: currency, symbol: false)
         }
-        .padding(.horizontal, 14)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        return AddTransactionView.grouped(expr)
     }
 
-    /// Suggested credited amount at the app's exchange rate.
-    func placeholderCredit(_ to: Wallet) -> String {
-        guard let m = amountMinor, let c = store.data.settings.converter.convert(m, from: currency, to: to.currency) else { return "0" }
+    // MARK: Description & labels
+
+    var descriptionCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField(L("Опишите операцию"), text: $note, axis: .vertical)
+                .font(.system(size: 18))
+                .lineLimit(2...4)
+                .focused($noteFocused)
+                .accessibilityIdentifier("note-field")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button { showNewLabel = true } label: {
+                        Image(systemName: "tag.fill").font(.system(size: 15)).foregroundStyle(Color.primary)
+                            .frame(width: 38, height: 38).background(Palette.bubble.opacity(0.85), in: Circle())
+                    }
+                    .accessibilityIdentifier("add-label")
+                    ForEach(labelOrder, id: \.self) { name in
+                        Chip(text: name, selected: tags.contains(name))
+                            .onTapGesture { Haptics.select(enabled: haptics); toggleTag(name) }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(Palette.card.opacity(stage == .category ? 0.75 : 0.6), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.5), lineWidth: 0.6))
+    }
+
+    /// Selected labels first, then the rest in their saved order.
+    var labelOrder: [String] {
+        let all = store.data.sortedLabels.map { $0.name }
+        return tags.filter { all.contains($0) } + all.filter { !tags.contains($0) }
+    }
+
+    func toggleTag(_ name: String) {
+        withAnimation(.snappy) { if tags.contains(name) { tags.removeAll { $0 == name } } else { tags.append(name) } }
+    }
+
+    // MARK: Stage 1 — category grid
+
+    var categoryGrid: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(L("Выберите категорию"))
+                .font(.system(size: 20, weight: .semibold))
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 14) {
+                    ForEach(store.data.categories(of: kind == .income ? .income : .expense)) { c in
+                        Button { pick(c) } label: {
+                            VStack(spacing: 7) {
+                                CategoryIconView(category: c, size: 72, style: .white)
+                                Text(c.name).font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
+                                    .lineLimit(1).minimumScaleFactor(0.75)
+                            }
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.9))
+                        .accessibilityIdentifier("category-\(c.name)")
+                    }
+                    Button { showNewCategory = true } label: {
+                        VStack(spacing: 7) {
+                            Image(systemName: "plus").font(.system(size: 28, weight: .regular)).foregroundStyle(Palette.accent)
+                                .frame(width: 72, height: 72).background(Palette.accent.opacity(0.16), in: Circle())
+                            Text(L("Создать категорию")).font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                        }
+                    }
+                    .buttonStyle(PressableStyle(scale: 0.9))
+                    .accessibilityIdentifier("create-category")
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 110)
+            }
+            .scrollIndicators(.hidden)
+            .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.82), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+        }
+        .overlay(alignment: .bottom) { kindBar.padding(.bottom, 8) }
+    }
+
+    /// [voice] [Expenses | Income] [Transfer]
+    var kindBar: some View {
+        HStack(spacing: 10) {
+            AssistantToolbarButton(context: nil, startVoice: true, label: AnyView(
+                Image(systemName: "mic.fill").font(.system(size: 20, weight: .semibold)).foregroundStyle(Palette.accent)
+                    .frame(width: 58, height: 58).background(Palette.card, in: Circle()).shadow(color: Palette.shadow, radius: 8, y: 3)
+            ))
+            .accessibilityIdentifier("add-voice")
+            KindSegment(kind: $kind, haptics: haptics)
+            Button {
+                Haptics.select(enabled: haptics)
+                startTransfer()
+            } label: {
+                Text(L("Перевод")).font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary)
+                    .padding(.horizontal, 18).frame(height: 58)
+                    .background(Palette.card, in: Capsule()).shadow(color: Palette.shadow, radius: 8, y: 3)
+            }
+            .buttonStyle(PressableStyle(scale: 0.94))
+            .accessibilityIdentifier("kind-transfer")
+        }
+        .padding(.horizontal, 16)
+    }
+
+    // MARK: Stage 2 — calculator
+
+    var amountStage: some View {
+        VStack(spacing: 14) {
+            chipsRow
+                .padding(.top, 16)
+            Spacer(minLength: 0)
+            if !noteFocused && !creditFocused {
+                keypad
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            Button(action: save) {
+                Text(editing == nil ? L("Добавить операцию") : L("Сохранить"))
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(height: 60)
+                    .background(canSave ? Palette.accent : Palette.accent.opacity(0.45), in: Capsule())
+                    .shadow(color: Palette.accent.opacity(canSave ? 0.35 : 0), radius: 12, y: 5)
+            }
+            .buttonStyle(PressableStyle(scale: 0.97))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+            .accessibilityIdentifier("save-button")
+        }
+        .animation(.snappy, value: noteFocused || creditFocused)
+    }
+
+    var canSave: Bool {
+        guard amountMinor > 0 else { return false }
+        if kind == .transfer { return toWalletID != nil && toWalletID != walletID }
+        return categoryID != nil
+    }
+
+    var chipsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { showDate = true } label: { Chip(text: dateLabel, systemImage: "calendar") }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chip-date")
+                walletMenu(selection: $walletID, prefix: kind == .transfer ? L("Откуда") : nil, id: "chip-wallet")
+                if kind == .transfer {
+                    Image(systemName: "arrow.right").foregroundStyle(Palette.textSecondary)
+                    walletMenu(selection: $toWalletID, prefix: L("Куда"), id: "chip-to-wallet", excluding: walletID)
+                    if let to = toWalletID.flatMap({ store.data.wallet($0) }), to.currency != currency {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.to.line").font(.system(size: 13, weight: .semibold))
+                            TextField(creditPlaceholder(to), text: $toAmountText)
+                                .keyboardType(.decimalPad).focused($creditFocused).frame(width: 90)
+                            Text(to.currency)
+                        }
+                        .font(.system(size: 15, weight: .medium))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Palette.bubble.opacity(0.85), in: Capsule())
+                    }
+                } else {
+                    Menu {
+                        Button(L("Не повторять")) { frequency = nil }
+                        ForEach(Frequency.allCases, id: \.self) { f in Button(Self.frequencyName(f)) { frequency = f } }
+                    } label: {
+                        Chip(text: frequency.map(Self.frequencyName) ?? L("Повтор"), systemImage: "arrow.triangle.2.circlepath", selected: frequency != nil)
+                    }
+                    .accessibilityIdentifier("chip-repeat")
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    func walletMenu(selection: Binding<UUID?>, prefix: String?, id: String, excluding: UUID? = nil) -> some View {
+        let w = selection.wrappedValue.flatMap { store.data.wallet($0) }
+        return Menu {
+            ForEach(store.data.activeWallets.filter { $0.id != excluding }) { wal in
+                Button("\(wal.name) · \(wal.currency)") {
+                    selection.wrappedValue = wal.id
+                    if selection.wrappedValue == walletID, editing == nil || expr.isEmpty { currency = wal.currency }
+                }
+            }
+        } label: {
+            Chip(text: (prefix.map { $0 + ": " } ?? "") + (w?.name ?? "—"), systemImage: "wallet.pass")
+        }
+        .accessibilityIdentifier(id)
+    }
+
+    var dateLabel: String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return L("Сегодня") }
+        if cal.isDateInYesterday(date) { return L("Вчера") }
+        let f = DateFormatter(); f.locale = Lang.locale; f.setLocalizedDateFormatFromTemplate("d MMM")
+        return f.string(from: date)
+    }
+
+    func creditPlaceholder(_ to: Wallet) -> String {
+        guard amountMinor > 0, let c = store.data.settings.converter.convert(amountMinor, from: currency, to: to.currency) else { return "0" }
         return MoneyMath.plainString(c, currency: to.currency).replacingOccurrences(of: ".", with: ",")
     }
 
-    var detailsCard: some View {
-        VStack(spacing: 0) {
-            if kind != .transfer {
-                HStack {
-                    Label(L("Кошелёк"), systemImage: "wallet.pass").foregroundStyle(.secondary)
-                    Spacer()
-                    Picker("", selection: $walletID) {
-                        ForEach(store.data.activeWallets) { w in Text("\(w.name) · \(w.currency)").tag(UUID?.some(w.id)) }
-                    }
-                    .labelsHidden()
-                    .accessibilityIdentifier("wallet-picker")
-                }
-                .padding(.vertical, 6)
-                Divider()
-            }
-            HStack {
-                Label(L("Дата"), systemImage: "calendar").foregroundStyle(.secondary)
-                Spacer()
-                DatePicker("", selection: $date).labelsHidden()
-            }
-            .padding(.vertical, 6)
-            Divider()
-            HStack {
-                Image(systemName: "text.alignleft").foregroundStyle(.secondary)
-                TextField(L("Комментарий"), text: $note, axis: .vertical)
-                    .focused($noteFocused)
-                    .lineLimit(1...3)
-                    .accessibilityIdentifier("note-field")
-            }
-            .padding(.vertical, 12)
+    static func frequencyName(_ f: Frequency) -> String {
+        switch f {
+        case .daily: return L("Каждый день")
+        case .weekly: return L("Каждую неделю")
+        case .monthly: return L("Каждый месяц")
+        case .yearly: return L("Каждый год")
         }
-        .padding(.horizontal, 14)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    var keypad: some View {
+        let rows: [[String]] = [["1", "2", "3", "÷"], ["4", "5", "6", "×"], ["7", "8", "9", "−"], [",", "0", "⌫", "+"]]
+        return VStack(spacing: 10) {
+            ForEach(rows, id: \.self) { row in
+                HStack(spacing: 10) {
+                    ForEach(row, id: \.self) { k in
+                        Button {
+                            Haptics.tap(enabled: haptics)
+                            expr = Calculator.press(k, to: expr)
+                        } label: {
+                            Group {
+                                if k == "⌫" { Image(systemName: "delete.left.fill") } else { Text(k) }
+                            }
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(Color.primary)
+                            .frame(maxWidth: .infinity).frame(height: 62)
+                            .background(Palette.card.opacity(0.9), in: Capsule())
+                            .shadow(color: Palette.shadow, radius: 4, y: 2)
+                        }
+                        .buttonStyle(PressableStyle(scale: 0.92))
+                        .accessibilityIdentifier("key-\(k)")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Category menu (glass dropdown)
+
+    var categoryMenu: some View {
+        let list = store.data.categories(of: menuKind)
+        let other: TxKind = menuKind == .expense ? .income : .expense
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                menuRow(title: L("Перевод"), icon: nil, checked: kind == .transfer) { startTransfer(); closeMenu() }
+                menuRow(title: other == .income ? L("Доходы") : L("Расходы"), icon: nil, checked: false, chevron: true) {
+                    withAnimation(.snappy) { menuKind = other }
+                }
+                Divider().padding(.vertical, 6).padding(.horizontal, 16)
+                Text(menuKind == .expense ? L("Расходы") : L("Доходы"))
+                    .font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
+                    .padding(.horizontal, 28).padding(.vertical, 6)
+                ForEach(list) { c in
+                    menuRow(title: c.name, icon: c, checked: kind != .transfer && categoryID == c.id) { pick(c); closeMenu() }
+                }
+            }
+            .padding(.vertical, 10)
+        }
+        .frame(width: 300, height: min(470, CGFloat(list.count) * 46 + 150))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .background(Palette.card.opacity(0.45), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
+        .shadow(color: .black.opacity(0.14), radius: 24, y: 10)
+        .accessibilityIdentifier("category-menu")
+    }
+
+    func menuRow(title: String, icon: FinCategory?, checked: Bool, chevron: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: { Haptics.select(enabled: haptics); action() }) {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold)).opacity(checked ? 1 : 0).frame(width: 16)
+                if let icon {
+                    CategoryIconView(category: icon, size: 28).frame(width: 28)
+                }
+                Text(title).font(.system(size: 18)).lineLimit(1)
+                Spacer()
+                if chevron { Image(systemName: "chevron.right").font(.system(size: 15, weight: .semibold)) }
+            }
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 16).padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    func closeMenu() { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { showMenu = false } }
+
+    // MARK: Actions
+
+    func pick(_ c: FinCategory) {
+        Haptics.select(enabled: haptics)
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+            kind = c.kind
+            categoryID = c.id
+            stage = .amount
+        }
+    }
+
+    func startTransfer() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+            kind = .transfer
+            categoryID = nil
+            if toWalletID == nil || toWalletID == walletID { toWalletID = store.data.activeWallets.first { $0.id != walletID }?.id }
+            stage = .amount
+        }
     }
 
     func load() {
@@ -266,67 +502,93 @@ struct AddTransactionView: View {
         let data = store.data
         if let t = editing {
             kind = t.kind
-            amountText = MoneyMath.plainString(t.amountMinor, currency: t.currency).replacingOccurrences(of: ".00", with: "").replacingOccurrences(of: ".", with: ",")
-            currency = t.currency; categoryID = t.categoryID; walletID = t.walletID; date = t.date; note = t.note
-            if t.isTransfer {
-                categoryID = nil
-                toWalletID = t.toWalletID
-                if t.creditedCurrency != t.currency {
-                    toAmountText = MoneyMath.plainString(t.creditedMinor, currency: t.creditedCurrency).replacingOccurrences(of: ".", with: ",")
-                }
+            expr = MoneyMath.plainString(t.amountMinor, currency: t.currency).replacingOccurrences(of: ".00", with: "").replacingOccurrences(of: ".", with: ",")
+            currency = t.currency; walletID = t.walletID; date = t.date; note = t.note; tags = t.tags
+            categoryID = t.isTransfer ? nil : t.categoryID
+            toWalletID = t.toWalletID
+            if t.isTransfer && t.creditedCurrency != t.currency {
+                toAmountText = MoneyMath.plainString(t.creditedMinor, currency: t.creditedCurrency).replacingOccurrences(of: ".", with: ",")
             }
+            frequency = t.recurringID.flatMap { id in data.recurring.first { $0.id == id && $0.isActive } }?.frequency
+            stage = .amount
         } else {
             walletID = data.defaultWallet?.id
             currency = data.defaultWallet?.currency ?? data.settings.baseCurrency
         }
     }
 
+    func fail() {
+        Haptics.error(enabled: haptics)
+        withAnimation(.default) { shake += 1 }
+    }
+
     func save() {
-        if kind == .transfer { saveTransfer(); return }
-        guard let minor = amountMinor, minor > 0 else { fail(); return }
-        guard let cat = categoryID else { fail(); return }
-        guard let wal = walletID ?? store.data.defaultWallet?.id else { fail(); return }
-        let ok: Bool
-        if let t = editing {
-            ok = store.perform(.updateTransactions(ids: [t.id], changes: TxChanges(kind: kind, amountMinor: minor, currency: currency,
-                                                                                   categoryID: cat, walletID: wal, date: date, note: note)),
-                               label: L("Операция изменена"))
-        } else {
-            let tx = Txn(kind: kind, amountMinor: minor, currency: currency, categoryID: cat, walletID: wal, date: date, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
-            ok = store.perform(.addTransactions([tx]), label: (kind == .expense ? L("Расход") : L("Доход")) + " " + Fmt.money(minor, currency))
-        }
-        if ok { dismiss() }
-    }
-
-    func saveTransfer() {
-        guard let minor = amountMinor, minor > 0,
-              let from = walletID ?? store.data.defaultWallet?.id,
-              let to = toWallet, to.id != from else { fail(); return }
-        var credited: Int64? = nil
-        if to.currency != currency {
-            if !toAmountText.isEmpty {
-                guard let v = MoneyMath.parseMinor(toAmountText, currency: to.currency), v > 0 else { fail(); return }
-                credited = v
-            } else if let v = store.data.settings.converter.convert(minor, from: currency, to: to.currency) {
-                credited = v
-            } else { fail(); return }
-        }
+        let minor = amountMinor
+        guard minor > 0, let wal = walletID ?? store.data.defaultWallet?.id else { fail(); return }
         let cleanNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        let ok: Bool
-        if let t = editing {
-            ok = store.perform(.updateTransactions(ids: [t.id], changes: TxChanges(
-                kind: .transfer, amountMinor: minor, currency: currency, walletID: from, date: date, note: cleanNote,
-                transfer: TransferTarget(toWalletID: to.id, toAmountMinor: credited, toCurrency: to.currency))),
-                               label: L("Операция изменена"))
+        var muts: [Mutation] = []
+        var label = ""
+        if kind == .transfer {
+            guard let to = toWalletID.flatMap({ store.data.wallet($0) }), to.id != wal else { fail(); return }
+            var credited: Int64? = nil
+            if to.currency != currency {
+                if !toAmountText.isEmpty {
+                    guard let v = MoneyMath.parseMinor(toAmountText, currency: to.currency), v > 0 else { fail(); return }
+                    credited = v
+                } else if let v = store.data.settings.converter.convert(minor, from: currency, to: to.currency) {
+                    credited = v
+                } else { fail(); return }
+            }
+            if let t = editing {
+                muts.append(.updateTransactions(ids: [t.id], changes: TxChanges(
+                    kind: .transfer, amountMinor: minor, currency: currency, walletID: wal, date: date, note: cleanNote,
+                    transfer: TransferTarget(toWalletID: to.id, toAmountMinor: credited, toCurrency: to.currency), labels: tags)))
+                label = L("Операция изменена")
+            } else {
+                var tx = Txn.transfer(from: wal, to: to.id, amountMinor: minor, currency: currency, toAmountMinor: credited,
+                                      toCurrency: to.currency, date: date, note: cleanNote)
+                tx.tags = tags
+                muts.append(.addTransactions([tx]))
+                label = L("Перевод") + " " + Fmt.code(minor, currency)
+            }
         } else {
-            let tx = Txn.transfer(from: from, to: to.id, amountMinor: minor, currency: currency, toAmountMinor: credited,
-                                  toCurrency: to.currency, date: date, note: cleanNote)
-            ok = store.perform(.addTransactions([tx]), label: L("Перевод") + " " + Fmt.money(minor, currency))
+            guard let cat = categoryID else { fail(); return }
+            if let t = editing {
+                muts.append(.updateTransactions(ids: [t.id], changes: TxChanges(kind: kind, amountMinor: minor, currency: currency,
+                                                                                 categoryID: cat, walletID: wal, date: date, note: cleanNote, labels: tags)))
+                // Repeat setting on an existing transaction.
+                let rule = t.recurringID.flatMap { id in store.data.recurring.first { $0.id == id } }
+                if let f = frequency {
+                    var tpl = t
+                    tpl.kind = kind; tpl.amountMinor = minor; tpl.currency = currency; tpl.categoryID = cat; tpl.walletID = wal; tpl.note = cleanNote; tpl.tags = tags
+                    if var r = rule {
+                        r.frequency = f; r.template = tpl; r.isActive = true
+                        muts.append(.upsertRecurring(r))
+                    } else {
+                        let r = RecurringRule(template: tpl, frequency: f, nextDate: Recurrence.advance(date, by: f, calendar: store.calendar))
+                        muts.append(.upsertRecurring(r))
+                        muts.append(.updateTransactions(ids: [t.id], changes: TxChanges(recurringID: r.id)))
+                    }
+                } else if let r = rule {
+                    muts.append(.deleteRecurring(id: r.id))
+                }
+                label = L("Операция изменена")
+            } else {
+                var tx = Txn(kind: kind, amountMinor: minor, currency: currency, categoryID: cat, walletID: wal, date: date,
+                             note: cleanNote, labels: tags)
+                if let f = frequency {
+                    let rule = RecurringRule(template: tx, frequency: f, nextDate: Recurrence.advance(date, by: f, calendar: store.calendar))
+                    tx.recurringID = rule.id
+                    muts.append(.upsertRecurring(rule))
+                }
+                muts.insert(.addTransactions([tx]), at: 0)
+                label = (kind == .expense ? L("Расход") : L("Доход")) + " " + Fmt.code(minor, currency)
+            }
         }
-        if ok { dismiss() }
+        if store.perform(muts.count == 1 ? muts[0] : .batch(muts), label: label) { dismiss() }
     }
 
-    /// "15000,5" → "15 000,5" for display (input text stays raw).
+    /// "15000,5" → "15 000,5" for display.
     static func grouped(_ text: String) -> String {
         guard !text.isEmpty else { return "0" }
         let parts = text.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
@@ -338,10 +600,54 @@ struct AddTransactionView: View {
         }
         return parts.count > 1 ? out + "," + parts[1] : out
     }
+}
 
-    func fail() {
-        Haptics.error(enabled: store.data.settings.haptics)
-        withAnimation(.default) { shake += 1 }
+/// Expenses | Income capsule with a sliding white pill.
+struct KindSegment: View {
+    @Binding var kind: TxKind
+    var haptics: Bool
+    @Namespace private var ns
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach([TxKind.expense, .income], id: \.self) { k in
+                let on = kind == k || (k == .expense && kind == .transfer)
+                Text(k == .expense ? L("Расходы") : L("Доходы"))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(on ? 1 : 0.75))
+                    .frame(maxWidth: .infinity).frame(height: 50)
+                    .background {
+                        if on { Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 6, y: 2).matchedGeometryEffect(id: "pill", in: ns) }
+                    }
+                    .contentShape(Capsule())
+                    .onTapGesture {
+                        Haptics.select(enabled: haptics)
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { kind = k }
+                    }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier(k == .expense ? "kind-expense" : "kind-income")
+            }
+        }
+        .padding(4)
+        .background(Palette.bubble.opacity(0.95), in: Capsule())
+    }
+}
+
+struct DateSheet: View {
+    @Binding var date: Date
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            DatePicker("", selection: $date)
+                .datePickerStyle(.graphical)
+                .padding()
+                .navigationTitle(L("Дата"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button(L("Сегодня")) { date = Date() } }
+                    ToolbarItem(placement: .confirmationAction) { Button(L("Готово")) { dismiss() } }
+                }
+        }
     }
 }
 
@@ -353,68 +659,5 @@ struct ShakeEffect: GeometryEffect {
     }
     func effectValue(size: CGSize) -> ProjectionTransform {
         ProjectionTransform(CGAffineTransform(translationX: 8 * sin(shakes * .pi * 4), y: 0))
-    }
-}
-
-/// Calculator-style keypad.
-struct Keypad: View {
-    @Binding var text: String
-    var haptics: Bool
-    var onSave: () -> Void
-
-    let keys: [[String]] = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], [",", "0", "⌫"]]
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(spacing: 8) {
-                ForEach(keys, id: \.self) { row in
-                    HStack(spacing: 8) {
-                        ForEach(row, id: \.self) { k in
-                            Button { press(k) } label: {
-                                Group {
-                                    if k == "⌫" { Image(systemName: "delete.left") } else { Text(k) }
-                                }
-                                .font(.system(size: 24, weight: .medium, design: .rounded))
-                                .frame(maxWidth: .infinity, minHeight: 50)
-                                .background(Palette.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .foregroundStyle(.primary)
-                            }
-                            .buttonStyle(PressableStyle(scale: 0.92))
-                            .accessibilityIdentifier("key-\(k)")
-                        }
-                    }
-                }
-            }
-            Button(action: onSave) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 72)
-                    .frame(maxHeight: .infinity)
-                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-            .buttonStyle(PressableStyle(scale: 0.94))
-            .accessibilityIdentifier("save-button")
-        }
-        .frame(height: 50 * 4 + 8 * 3)
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
-        .background(.bar)
-    }
-
-    func press(_ k: String) {
-        Haptics.tap(enabled: haptics)
-        switch k {
-        case "⌫":
-            if !text.isEmpty { text.removeLast() }
-        case ",":
-            if !text.contains(",") { text = (text.isEmpty ? "0" : text) + "," }
-        default:
-            if let comma = text.firstIndex(of: ",") , text.distance(from: comma, to: text.endIndex) > 2 { return }
-            if text == "0" { text = k; return }
-            if text.replacingOccurrences(of: ",", with: "").count >= 12 { return }
-            text += k
-        }
     }
 }

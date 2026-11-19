@@ -2,7 +2,7 @@ import SwiftUI
 import PhotosUI
 import GroshiCore
 
-/// Create/edit a category: name, kind, colour and icon (built-in library, emoji or own image).
+/// "Create New Category": preview, rounded name field, colour row, 5-column icon grid; plus emoji and own image.
 struct CategoryEditor: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -11,12 +11,16 @@ struct CategoryEditor: View {
 
     @State private var name = ""
     @State private var kind: TxKind
-    @State private var color = "#FF9F43"
+    @State private var color = "#6CC644"
     @State private var icon: CategoryIcon = .symbol("tag.fill")
-    @State private var mode = 0
     @State private var emoji = ""
     @State private var photo: PhotosPickerItem?
-    @State private var search = ""
+    @State private var showEmoji = false
+    @State private var confirmDelete = false
+    @FocusState private var nameFocused: Bool
+
+    static let colors = ["#6CC644", "#F25C54", "#FF9F0A", "#F5C518", "#1FA2C4", "#FF6FB5", "#2E86DE", "#8A4FD8",
+                         "#1BC47D", "#E07B39", "#B08D57", "#5CC0D6", "#8E8EA6", "#E8586E", "#3BA7DC", "#576574"]
 
     init(category: FinCategory?, kind: TxKind, onSave: @escaping (FinCategory) -> Void) {
         self.category = category
@@ -25,103 +29,148 @@ struct CategoryEditor: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    HStack(spacing: 14) {
-                        CategoryIconView(icon: icon, colorHex: color, size: 56)
-                            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: icon)
-                        TextField(L("Название"), text: $name).font(.title3).accessibilityIdentifier("category-name")
-                    }
-                    Picker(L("Тип"), selection: $kind) {
-                        Text(L("Расход")).tag(TxKind.expense)
-                        Text(L("Доход")).tag(TxKind.income)
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(category.map { c in store.data.transactions.contains { $0.categoryID == c.id } } ?? false)
-                }
-                Section(L("Цвет")) { ColorRow(hex: $color) }
-                Section(L("Иконка")) {
-                    Picker("", selection: $mode) {
-                        Text(L("Библиотека")).tag(0)
-                        Text(L("Эмодзи")).tag(1)
-                        Text(L("Своя")).tag(2)
-                    }
-                    .pickerStyle(.segmented)
-                    switch mode {
-                    case 0: symbolLibrary
-                    case 1:
-                        TextField(L("Введите эмодзи"), text: $emoji)
-                            .font(.largeTitle)
-                            .onChange(of: emoji) { _, v in
-                                if let first = v.last, first.unicodeScalars.contains(where: { $0.properties.isEmoji && $0.value > 0x238C }) {
-                                    icon = .emoji(String(first))
-                                    if v.count > 1 { emoji = String(first) }
-                                }
-                            }
-                        Text(L("Переключите клавиатуру на эмодзи 😀")).font(.footnote).foregroundStyle(.secondary)
-                    default:
-                        PhotosPicker(selection: $photo, matching: .images) {
-                            Label(L("Выбрать изображение"), systemImage: "photo.on.rectangle")
-                        }
-                        .onChange(of: photo) { _, item in
-                            Task {
-                                if let d = try? await item?.loadTransferable(type: Data.self), let ui = UIImage(data: d),
-                                   let file = store.saveIcon(ui) {
-                                    icon = .image(file)
-                                }
-                            }
-                        }
-                        Text(L("Картинка будет обрезана в круг и сохранена в приложении.")).font(.footnote).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle(category == nil ? L("Новая категория") : L("Категория"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(L("Отмена")) { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(L("Сохранить"), action: save).disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        ZStack(alignment: .top) {
+            Palette.background.ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack {
+                    CircleButton(systemImage: "xmark") { dismiss() }
+                    Spacer()
+                    Text(category == nil ? L("Новая категория") : L("Категория")).font(.system(size: 19, weight: .semibold))
+                    Spacer()
+                    CircleButton(systemImage: "checkmark") { save() }
+                        .opacity(name.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1)
                         .accessibilityIdentifier("category-save")
                 }
-            }
-            .onAppear {
-                if let c = category {
-                    name = c.name; color = c.colorHex; icon = c.icon
-                    switch c.icon {
-                    case .symbol: mode = 0
-                    case .emoji(let e): mode = 1; emoji = e
-                    case .image: mode = 2
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        preview
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 18)
+
+                        HStack {
+                            Text(L("Название")).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
+                            TextField(L("Название категории"), text: $name)
+                                .font(.system(size: 18))
+                                .multilineTextAlignment(.trailing)
+                                .focused($nameFocused)
+                                .accessibilityIdentifier("category-name")
+                        }
+                        .padding(.horizontal, 22).frame(height: 64)
+                        .background(Palette.card, in: Capsule())
+                        .shadow(color: Palette.shadow, radius: 10, y: 3)
+                        .padding(.top, 26)
+
+                        if category.map({ c in store.data.transactions.contains { $0.categoryID == c.id } }) != true {
+                            KindSegment(kind: $kind, haptics: store.data.settings.haptics)
+                                .padding(.top, 14)
+                        }
+
+                        Text(L("Цвет категории")).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
+                            .padding(.top, 22)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(Self.colors, id: \.self) { c in
+                                    ZStack {
+                                        Circle().fill(color == c ? Color(hex: c) : Palette.card)
+                                            .shadow(color: Palette.shadow, radius: 4, y: 2)
+                                        if color != c { Circle().fill(Color(hex: c)).frame(width: 16, height: 16) }
+                                    }
+                                    .frame(width: 54, height: 54)
+                                    .onTapGesture { Haptics.select(); withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { color = c } }
+                                }
+                                ColorPicker("", selection: Binding(get: { Color(hex: color) }, set: { color = $0.hexString }), supportsOpacity: false)
+                                    .labelsHidden().frame(width: 54, height: 54)
+                            }
+                            .padding(.vertical, 8).padding(.horizontal, 2)
+                        }
+                        .padding(.top, 6)
+
+                        HStack {
+                            Text(L("Иконка категории")).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Button { showEmoji = true } label: { Chip(text: "😀 " + L("Эмодзи")) }.buttonStyle(.plain)
+                            PhotosPicker(selection: $photo, matching: .images) { Chip(text: L("Своя"), systemImage: "photo") }
+                        }
+                        .padding(.top, 18)
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 12) {
+                            ForEach(IconLibrary.all, id: \.self) { s in
+                                let on = icon == .symbol(s)
+                                Image(systemName: s)
+                                    .font(.system(size: 24, weight: .medium))
+                                    .foregroundStyle(on ? Color(hex: color) : Color(hex: "#9AA7B4"))
+                                    .frame(width: 62, height: 62)
+                                    .background(on ? Palette.pastel(color, 0.22) : Palette.card, in: Circle())
+                                    .overlay(Circle().strokeBorder(on ? Color(hex: color) : .clear, lineWidth: 2))
+                                    .scaleEffect(on ? 1.06 : 1)
+                                    .onTapGesture { Haptics.select(); withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) { icon = .symbol(s) } }
+                            }
+                        }
+                        .padding(.top, 12)
+
+                        if let c = category {
+                            Button(role: .destructive) { confirmDelete = true } label: {
+                                Text(L("Удалить категорию")).font(.system(size: 17, weight: .medium))
+                                    .frame(maxWidth: .infinity).frame(height: 54)
+                                    .background(Palette.card, in: Capsule())
+                            }
+                            .padding(.top, 24)
+                            .sheet(isPresented: $confirmDelete) { DeleteCategorySheet(category: c).presentationDetents([.medium]) }
+                        }
                     }
-                } else {
-                    color = Defaults.palette[store.data.categories.count % Defaults.palette.count]
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
+                }
+                .scrollDismissesKeyboard(.interactively)
+            }
+        }
+        .presentationCornerRadius(38)
+        .onAppear {
+            if let c = category {
+                name = c.name; color = c.colorHex; icon = c.icon
+            } else {
+                color = Self.colors[store.data.categories.count % Self.colors.count]
+                nameFocused = true
+            }
+        }
+        .onChange(of: photo) { _, item in
+            Task {
+                if let d = try? await item?.loadTransferable(type: Data.self), let ui = UIImage(data: d), let file = store.saveIcon(ui) {
+                    withAnimation(.spring) { icon = .image(file) }
                 }
             }
         }
+        .alert(L("Эмодзи"), isPresented: $showEmoji) {
+            TextField("😀", text: $emoji)
+            Button(L("Отмена"), role: .cancel) {}
+            Button(L("Готово")) {
+                if let ch = emoji.last, ch.unicodeScalars.contains(where: { $0.properties.isEmoji && $0.value > 0x238C }) {
+                    withAnimation(.spring) { icon = .emoji(String(ch)) }
+                }
+                emoji = ""
+            }
+        } message: { Text(L("Переключите клавиатуру на эмодзи 😀")) }
     }
 
-    var symbolLibrary: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField(L("Поиск иконки (англ.)"), text: $search)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-            let list = search.isEmpty ? IconLibrary.all : IconLibrary.all.filter { $0.contains(search.lowercased()) }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 10) {
-                ForEach(list, id: \.self) { s in
-                    let on = icon == .symbol(s)
-                    Image(systemName: s)
-                        .font(.system(size: 18))
-                        .frame(width: 42, height: 42)
-                        .foregroundStyle(on ? .white : Color(hex: color))
-                        .background(on ? Color(hex: color) : Color(hex: color).opacity(0.15), in: Circle())
-                        .onTapGesture { Haptics.select(); withAnimation(.snappy) { icon = .symbol(s) } }
-                }
-            }
+    var preview: some View {
+        ZStack {
+            Circle().fill(LinearGradient(colors: [Color(hex: color).opacity(0.35), Color(hex: color).opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            CategoryIconView(icon: icon, colorHex: color, size: 104)
+                .opacity(icon == .symbol("tag.fill") && category == nil ? 0.0 : 1)
         }
+        .frame(width: 104, height: 104)
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: icon)
+        .animation(.easeInOut(duration: 0.25), value: color)
     }
 
     func save() {
-        var c = category ?? FinCategory(name: name, kind: kind, icon: icon, colorHex: color)
-        c.name = name; c.kind = kind; c.icon = icon; c.colorHex = color
+        let clean = name.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty else { Haptics.error(); return }
+        var c = category ?? FinCategory(name: clean, kind: kind, icon: icon, colorHex: color)
+        c.name = clean; c.kind = kind; c.icon = icon; c.colorHex = color
         if store.perform(.upsertCategory(c), label: (category == nil ? L("Категория создана: ") : L("Категория изменена: ")) + c.name) {
             onSave(c)
             dismiss()
@@ -130,31 +179,25 @@ struct CategoryEditor: View {
 }
 
 enum IconLibrary {
+    /// Ordered like Spendee's picker: the most common meanings first.
     static let all: [String] = [
-        // food & drink
-        "cart.fill", "basket.fill", "fork.knife", "cup.and.saucer.fill", "mug.fill", "wineglass.fill", "birthday.cake.fill",
-        "carrot.fill", "fish.fill", "takeoutbag.and.cup.and.straw.fill", "popcorn.fill", "waterbottle.fill",
-        // transport
-        "car.fill", "car.side.fill", "bus.fill", "tram.fill", "tram.fill.tunnel", "bicycle", "scooter", "fuelpump.fill", "ev.charger.fill",
-        "parkingsign.circle.fill", "airplane", "ferry.fill", "sailboat.fill", "train.side.front.car", "steeringwheel", "wrench.and.screwdriver.fill",
-        // home
-        "house.fill", "building.2.fill", "bed.double.fill", "sofa.fill", "lamp.desk.fill", "bolt.fill", "drop.fill", "flame.fill",
-        "wifi", "phone.fill", "tv.fill", "washer.fill", "key.fill", "hammer.fill", "paintbrush.fill", "leaf.fill",
-        // shopping
-        "bag.fill", "tshirt.fill", "shoe.fill", "eyeglasses", "handbag.fill", "giftcard.fill", "gift.fill", "tag.fill", "barcode",
-        "iphone", "laptopcomputer", "desktopcomputer", "headphones", "gamecontroller.fill", "camera.fill", "watch.analog",
-        // health & beauty
-        "cross.case.fill", "pills.fill", "heart.fill", "stethoscope", "bandage.fill", "figure.run", "dumbbell.fill",
-        "sparkles", "comb.fill", "scissors", "mouth.fill", "brain.head.profile",
-        // leisure
-        "film.fill", "music.note", "ticket.fill", "theatermasks.fill", "book.fill", "books.vertical.fill", "paintpalette.fill",
-        "beach.umbrella.fill", "tent.fill", "mountain.2.fill", "soccerball", "tennis.racket", "figure.pool.swim", "smoke.fill",
-        "party.popper.fill", "balloon.fill", "dice.fill", "puzzlepiece.fill",
-        // people & pets
-        "person.fill", "person.2.fill", "figure.2.and.child.holdinghands", "stroller.fill", "graduationcap.fill", "pawprint.fill", "dog.fill", "cat.fill",
-        // money & work
-        "banknote.fill", "creditcard.fill", "dollarsign.circle.fill", "eurosign.circle.fill", "hryvniasign.circle.fill", "chart.line.uptrend.xyaxis",
-        "briefcase.fill", "building.columns.fill", "percent", "doc.text.fill", "signature", "hand.thumbsup.fill",
-        "arrow.left.arrow.right", "repeat", "lock.fill", "shield.fill", "globe", "star.fill", "ellipsis.circle.fill"
+        "car.fill", "airplane", "fork.knife", "person.fill", "banknote.fill",
+        "theatermasks.fill", "house.fill", "bolt.fill", "bag.fill", "bed.double.fill",
+        "cross.case.fill", "shippingbox.fill", "tshirt.fill", "tram.fill", "carrot.fill",
+        "wineglass.fill", "soccerball", "pawprint.fill", "graduationcap.fill", "film.fill",
+        "heart.fill", "train.side.front.car", "building.columns.fill", "music.note", "wallet.pass.fill",
+        "gift.fill", "dumbbell.fill", "iphone", "cup.and.saucer.fill", "mug.fill",
+        "cart.fill", "basket.fill", "takeoutbag.and.cup.and.straw.fill", "birthday.cake.fill", "fish.fill",
+        "bus.fill", "car.side.fill", "bicycle", "motorcycle", "fuelpump.fill",
+        "parkingsign.circle.fill", "wrench.and.screwdriver.fill", "hammer.fill", "paintbrush.fill", "scissors",
+        "pills.fill", "stethoscope", "mouth.fill", "camera.macro", "sparkles",
+        "gamecontroller.fill", "play.fill", "laptopcomputer", "tv.fill", "headphones",
+        "book.fill", "ticket.fill", "beach.umbrella.fill", "tent.fill", "mountain.2.fill",
+        "teddybear.fill", "figure.2.and.child.holdinghands", "stroller.fill", "dog.fill", "cat.fill",
+        "creditcard.fill", "dollarsign.circle.fill", "hryvniasign.circle.fill", "chart.line.uptrend.xyaxis", "briefcase.fill",
+        "percent", "doc.text.fill", "tag.fill", "diamond.fill", "suit.spade.fill",
+        "smoke.fill", "scope", "wifi", "phone.fill", "drop.fill",
+        "flame.fill", "leaf.fill", "lock.fill", "shield.fill", "globe",
+        "arrow.left.arrow.right", "repeat", "star.fill", "party.popper.fill", "ellipsis.circle.fill"
     ]
 }

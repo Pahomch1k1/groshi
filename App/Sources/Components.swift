@@ -1,43 +1,57 @@
 import SwiftUI
 import GroshiCore
 
-/// Category glyph in a pastel circle (SF Symbol, emoji or custom image).
+// MARK: Icons
+
+/// Category glyph in a circle. `.pastel` = tinted circle (lists), `.white` = white circle (category grid, detail).
 struct CategoryIconView: View {
+    enum Style { case pastel, white }
     @Environment(Store.self) private var store
     var icon: CategoryIcon
     var colorHex: String
     var size: CGFloat = 40
+    var style: Style = .pastel
 
     var body: some View {
         let color = Color(hex: colorHex)
         ZStack {
-            Circle().fill(color.opacity(0.18))
-            switch icon {
-            case .symbol(let name):
-                Image(systemName: UIImage(systemName: name) != nil ? name : "tag.fill")
-                    .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(color)
-            case .emoji(let e):
-                Text(e).font(.system(size: size * 0.5))
-            case .image(let file):
-                if let ui = UIImage(contentsOfFile: store.iconURL(file).path) {
-                    Image(uiImage: ui).resizable().scaledToFill()
-                        .frame(width: size * 0.92, height: size * 0.92)
-                        .clipShape(Circle())
-                } else {
-                    Image(systemName: "photo").foregroundStyle(color)
-                }
+            switch style {
+            case .pastel:
+                Circle().fill(LinearGradient(colors: [color.opacity(0.26), color.opacity(0.12)], startPoint: .top, endPoint: .bottom))
+            case .white:
+                Circle().fill(Palette.card).shadow(color: Palette.shadow, radius: 6, y: 2)
             }
+            glyph(color)
         }
         .frame(width: size, height: size)
+    }
+
+    @ViewBuilder func glyph(_ color: Color) -> some View {
+        switch icon {
+        case .symbol(let name):
+            Image(systemName: UIImage(systemName: name) != nil ? name : "tag.fill")
+                .font(.system(size: size * 0.44, weight: .semibold))
+                .foregroundStyle(color)
+        case .emoji(let e):
+            Text(e).font(.system(size: size * 0.5))
+        case .image(let file):
+            if let ui = UIImage(contentsOfFile: store.iconURL(file).path) {
+                Image(uiImage: ui).resizable().scaledToFill()
+                    .frame(width: size * 0.92, height: size * 0.92)
+                    .clipShape(Circle())
+            } else {
+                Image(systemName: "photo").foregroundStyle(color)
+            }
+        }
     }
 }
 
 extension CategoryIconView {
-    init(category: GroshiCore.Category?, size: CGFloat = 40) {
+    init(category: GroshiCore.Category?, size: CGFloat = 40, style: Style = .pastel) {
         self.icon = category?.icon ?? .symbol("questionmark")
         self.colorHex = category?.colorHex ?? "#8395A7"
         self.size = size
+        self.style = style
     }
 }
 
@@ -47,68 +61,387 @@ struct TransferIcon: View {
     var body: some View {
         Image(systemName: "arrow.left.arrow.right")
             .font(.system(size: size * 0.4, weight: .semibold))
-            .foregroundStyle(Color(hex: "#576574"))
+            .foregroundStyle(Color(hex: "#5B6573"))
             .frame(width: size, height: size)
             .background(Color(hex: "#8395A7").opacity(0.18), in: Circle())
     }
 }
 
-/// Floating capsule tab bar with a bubble that slides to the active tab.
-struct BubbleTabBar: View {
+/// Icon for any transaction (category or transfer).
+struct TxIcon: View {
+    @Environment(Store.self) private var store
+    var tx: Txn
+    var size: CGFloat = 44
+    var body: some View {
+        if tx.isTransfer { TransferIcon(size: size) } else { CategoryIconView(category: store.data.category(tx.categoryID), size: size) }
+    }
+}
+
+/// Grey "pick a category" glyph from Spendee's empty entry screen.
+struct CategoryPlaceholderIcon: View {
+    var size: CGFloat = 64
+    var body: some View {
+        ZStack {
+            Circle().fill(Palette.card.opacity(0.7))
+            Grid(horizontalSpacing: 2, verticalSpacing: 2) {
+                GridRow { Image(systemName: "star.fill"); Image(systemName: "triangle.fill") }
+                GridRow { Image(systemName: "heart.fill"); Image(systemName: "bag.fill") }
+            }
+            .font(.system(size: size * 0.17, weight: .bold))
+            .foregroundStyle(Color(hex: "#7C8794"))
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// MARK: Tab bar
+
+/// Floating translucent capsule with a bubble that slides horizontally to the active tab.
+/// Fixed size: icons and labels never change dimensions, so nothing around it moves.
+struct SpendTabBar: View {
     @Binding var selection: AppTab
     var haptics: Bool
     @Namespace private var ns
 
-    struct Item: Identifiable { let id: AppTab; let title: String; let icon: String }
+    struct Item: Identifiable { let id: AppTab; let title: String; let icon: String; let activeIcon: String }
     var items: [Item] {
-        [Item(id: .home, title: L("Главная"), icon: "house"),
-         Item(id: .overview, title: L("Обзор"), icon: "chart.pie"),
-         Item(id: .assistant, title: L("Ассистент"), icon: "sparkles"),
-         Item(id: .more, title: L("Ещё"), icon: "ellipsis")]
+        [Item(id: .home, title: L("Главная"), icon: "house", activeIcon: "house.fill"),
+         Item(id: .overview, title: L("Обзор"), icon: "chart.pie", activeIcon: "chart.pie.fill"),
+         Item(id: .more, title: L("Ещё"), icon: "ellipsis", activeIcon: "ellipsis")]
     }
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             ForEach(items) { item in
                 let active = selection == item.id
-                Button {
+                ZStack {
+                    if active {
+                        Capsule(style: .continuous)
+                            .fill(Palette.bubble.opacity(0.9))
+                            .matchedGeometryEffect(id: "bubble", in: ns)
+                    }
+                    VStack(spacing: 3) {
+                        Image(systemName: active ? item.activeIcon : item.icon)
+                            .font(.system(size: 19, weight: .semibold))
+                            .frame(width: 28, height: 24)
+                        Text(item.title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(active ? Palette.accent : Color.primary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .contentShape(Rectangle())
+                .onTapGesture {
                     guard selection != item.id else { return }
                     Haptics.select(enabled: haptics)
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { selection = item.id }
-                } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: active ? item.icon + (item.icon == "ellipsis" || item.icon == "sparkles" ? "" : ".fill") : item.icon)
-                            .font(.system(size: 18, weight: active ? .semibold : .regular))
-                            .symbolEffect(.bounce, value: active)
-                            .frame(height: 22)
-                        Text(item.title).font(.system(size: 10, weight: active ? .semibold : .medium))
-                            .lineLimit(1).minimumScaleFactor(0.8)
-                    }
-                    .foregroundStyle(active ? Palette.accent : Color.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background {
-                        if active {
-                            Capsule(style: .continuous)
-                                .fill(Palette.bubble)
-                                .matchedGeometryEffect(id: "bubble", in: ns)
-                        }
-                    }
-                    .contentShape(Rectangle())
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { selection = item.id }
                 }
-                .buttonStyle(PressableStyle(scale: 0.9))
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(active ? [.isButton, .isSelected] : .isButton)
                 .accessibilityIdentifier("tab-\(item.id)")
-                .accessibilityAddTraits(active ? .isSelected : [])
             }
         }
         .padding(5)
-        .background(.regularMaterial, in: Capsule(style: .continuous))
-        .overlay(Capsule(style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
-        .shadow(color: .black.opacity(0.12), radius: 18, y: 6)
+        .frame(height: 66)
+        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .background(Palette.card.opacity(0.55), in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.10), radius: 20, y: 8)
+        .accessibilityIdentifier("tabbar")
     }
 }
 
-/// Bottom toast with optional Undo.
+// MARK: Buttons
+
+/// Round floating "+" with press animation; long press triggers `onLongPress`.
+struct FAB: View {
+    var systemImage: String
+    var color: Color = Palette.accent
+    var size: CGFloat = 62
+    var onLongPress: (() -> Void)? = nil
+    var action: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size * 0.42, weight: .medium))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(color, in: Circle())
+            .shadow(color: color.opacity(0.35), radius: 14, y: 6)
+            .scaleEffect(pressed ? 0.9 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: pressed)
+            .contentShape(Circle())
+            .onTapGesture(perform: action)
+            .onLongPressGesture(minimumDuration: 0.45, perform: { onLongPress?() }, onPressingChanged: { pressed = $0 })
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default, action)
+    }
+}
+
+/// White circular icon button (header actions, close buttons).
+struct CircleButton: View {
+    var systemImage: String
+    var size: CGFloat = 46
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(Color.primary)
+                .frame(width: size, height: size)
+                .background(Palette.card.opacity(0.92), in: Circle())
+                .shadow(color: Palette.shadow, radius: 8, y: 3)
+        }
+        .buttonStyle(PressableStyle(scale: 0.9))
+    }
+}
+
+/// Scale-down press effect for buttons.
+struct PressableStyle: ButtonStyle {
+    var scale: CGFloat = 0.94
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+/// Toolbar/header button that opens the assistant (available on every screen, including sheets).
+struct AssistantToolbarButton: View {
+    @Environment(AssistantViewModel.self) private var ai
+    var context: String? = nil
+    var startVoice = false
+    var label: AnyView? = nil
+    @State private var show = false
+    var body: some View {
+        Button {
+            ai.prepare(context: context, startVoice: startVoice)
+            show = true
+        } label: {
+            if let label { label } else { Image(systemName: "sparkles") }
+        }
+        .accessibilityLabel(L("Ассистент"))
+        .sheet(isPresented: $show) {
+            AssistantView(isSheet: true)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+// MARK: Period pager
+
+/// "Oct 2026 | This month": horizontally scrolling periods, the selected one on a white capsule.
+struct PeriodPager: View {
+    @Environment(Store.self) private var store
+    @State private var showCustom = false
+
+    var body: some View {
+        let cal = store.calendar
+        let current = store.period
+        Group {
+            if current.canStep {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(periods(cal), id: \.start) { p in
+                                let selected = p.start == current.start
+                                Text(label(p, cal))
+                                    .font(.system(size: 15, weight: selected ? .medium : .regular))
+                                    .foregroundStyle(selected ? Color.primary : Palette.textTertiary)
+                                    .padding(.horizontal, 18).padding(.vertical, 9)
+                                    .background {
+                                        if selected { Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 8, y: 2) }
+                                    }
+                                    .id(p.start)
+                                    .onTapGesture {
+                                        Haptics.select(enabled: store.data.settings.haptics)
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { store.period = p }
+                                    }
+                            }
+                        }
+                        .padding(.horizontal, 60)
+                        .padding(.vertical, 6)
+                    }
+                    .onAppear { proxy.scrollTo(current.start, anchor: .center) }
+                    .onChange(of: current.start) { _, s in withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { proxy.scrollTo(s, anchor: .center) } }
+                }
+            } else {
+                Button { showCustom = true } label: {
+                    Text(Fmt.periodTitle(current, calendar: cal))
+                        .font(.system(size: 15, weight: .medium)).foregroundStyle(Color.primary)
+                        .padding(.horizontal, 18).padding(.vertical, 9)
+                        .background(Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 8, y: 2))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+        }
+        .accessibilityIdentifier("period-pager")
+        .sheet(isPresented: $showCustom) { CustomPeriodSheet().presentationDetents([.medium]) }
+    }
+
+    /// From the first transaction's period to the current one (at least 12 back).
+    func periods(_ cal: Calendar) -> [Period] {
+        let now = Period.containing(Date(), kind: store.period.kind, calendar: cal)
+        let first = store.data.transactions.map(\.date).min() ?? Date()
+        var list: [Period] = []
+        var p = now
+        var n = 0
+        while (p.end > first || n < 12) && n < 240 {
+            list.append(p)
+            p = p.shifted(by: -1, calendar: cal)
+            n += 1
+        }
+        if store.period.start > now.start { list.insert(store.period, at: 0) }
+        return list.reversed()
+    }
+
+    func label(_ p: Period, _ cal: Calendar) -> String {
+        let now = Period.containing(Date(), kind: p.kind, calendar: cal)
+        if p.start == now.start {
+            switch p.kind {
+            case .week: return L("Эта неделя")
+            case .month: return L("Этот месяц")
+            case .year: return L("Этот год")
+            default: break
+            }
+        }
+        let f = DateFormatter(); f.locale = Lang.locale
+        switch p.kind {
+        case .month: f.setLocalizedDateFormatFromTemplate("LLL yyyy")
+        case .year: f.setLocalizedDateFormatFromTemplate("yyyy")
+        default: return Fmt.periodTitle(p, calendar: cal)
+        }
+        return f.string(from: p.start).capitalizedFirst
+    }
+}
+
+struct CustomPeriodSheet: View {
+    @Environment(Store.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var from = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
+    @State private var to = Date()
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker(L("С"), selection: $from, displayedComponents: .date)
+                DatePicker(L("По"), selection: $to, displayedComponents: .date)
+            }
+            .navigationTitle(L("Свой период"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button(L("Отмена")) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L("Готово")) {
+                        withAnimation(.snappy) { store.period = Period.custom(from: from, to: to, calendar: store.calendar) }
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: Transaction rows
+
+/// One row inside a day card: icon, category, optional wallet/note/labels, amount.
+struct TransactionRow: View {
+    @Environment(Store.self) private var store
+    var tx: Txn
+
+    var body: some View {
+        let data = store.data
+        let cat = data.category(tx.categoryID)
+        let multiWallet = data.activeWallets.count > 1
+        let subtitle: String? = tx.isTransfer ? Fmt.route(tx, data) : (multiWallet ? data.wallet(tx.walletID)?.name : nil)
+        HStack(alignment: .center, spacing: 14) {
+            TxIcon(tx: tx, size: 46)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(tx.isTransfer ? L("Перевод") : (cat?.name ?? L("Без категории")))
+                    .font(.system(size: 17)).foregroundStyle(Color.primary).lineLimit(1)
+                if let subtitle {
+                    HStack(spacing: 4) {
+                        Image(systemName: tx.isTransfer ? "arrow.left.arrow.right" : "wallet.pass").font(.system(size: 11))
+                        Text(subtitle).lineLimit(1)
+                    }
+                    .font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
+                }
+                if !tx.note.isEmpty {
+                    Text(tx.note).font(.system(size: 14)).foregroundStyle(Palette.textSecondary).lineLimit(2)
+                }
+                if !tx.tags.isEmpty {
+                    Text(tx.tags.map { "#" + $0 }.joined(separator: " "))
+                        .font(.system(size: 13)).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(Fmt.txCode(tx))
+                    .font(.system(size: 17).monospacedDigit())
+                    .foregroundStyle(tx.kind == .income ? Palette.income : Color.primary)
+                    .strikethrough(tx.isExcluded, color: Palette.textTertiary)
+                if tx.recurringID != nil {
+                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Day header + all its transactions in one white rounded card.
+struct DayGroupView: View {
+    @Environment(Store.self) private var store
+    var group: DayGroup
+    var onTap: (Txn) -> Void
+    var onEdit: (Txn) -> Void
+
+    var body: some View {
+        let base = store.data.settings.baseCurrency
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(Fmt.dayTitle(group.day, calendar: store.calendar))
+                Spacer()
+                Text(Fmt.code(group.net, base)).monospacedDigit()
+            }
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(Palette.textSecondary)
+            .padding(.horizontal, 22)
+
+            VStack(spacing: 0) {
+                ForEach(group.items) { tx in
+                    TransactionRow(tx: tx)
+                        .onTapGesture { Haptics.tap(enabled: store.data.settings.haptics); onTap(tx) }
+                        .contextMenu {
+                            Button { onEdit(tx) } label: { Label(L("Изменить"), systemImage: "pencil") }
+                            Button {
+                                var copy = tx
+                                copy.id = UUID(); copy.date = Date(); copy.createdAt = Date(); copy.source = .manual; copy.recurringID = nil
+                                store.perform(.addTransactions([copy]), label: L("Операция добавлена"))
+                            } label: { Label(L("Повторить сегодня"), systemImage: "plus.square.on.square") }
+                            Button(role: .destructive) {
+                                store.perform(.deleteTransactions([tx.id]), label: L("Операция удалена"))
+                            } label: { Label(L("Удалить"), systemImage: "trash") }
+                        }
+                        .accessibilityIdentifier("tx-row")
+                        .transition(.asymmetric(insertion: .scale(scale: 0.96).combined(with: .opacity), removal: .opacity))
+                }
+            }
+            .padding(.vertical, 8)
+            .spendCard()
+        }
+    }
+}
+
+// MARK: Toast
+
 struct ToastView: View {
     @Environment(Store.self) private var store
     var toast: Toast
@@ -139,171 +472,17 @@ struct ToastView: View {
     }
 }
 
-/// Round floating action button with press animation.
-struct FAB: View {
-    var systemImage: String
-    var color: Color = Palette.accent
-    var size: CGFloat = 58
-    var onLongPress: (() -> Void)? = nil
-    var action: () -> Void
-    @State private var pressed = false
+// MARK: Misc
 
+/// Card container used in settings-like screens.
+struct Card<Content: View>: View {
+    var padding: CGFloat = 16
+    @ViewBuilder var content: Content
     var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: size * 0.4, weight: .bold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(color, in: Circle())
-            .shadow(color: color.opacity(0.45), radius: 12, y: 6)
-            .scaleEffect(pressed ? 0.88 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.6), value: pressed)
-            .contentShape(Circle())
-            .onTapGesture(perform: action)
-            .onLongPressGesture(minimumDuration: 0.45, perform: { onLongPress?() }, onPressingChanged: { pressed = $0 })
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction(.default, action)
-    }
-}
-
-/// Toolbar button that opens the assistant (available on every screen, including sheets).
-struct AssistantToolbarButton: View {
-    @Environment(AssistantViewModel.self) private var ai
-    var context: String? = nil
-    @State private var show = false
-    var body: some View {
-        Button {
-            ai.prepare(context: context, startVoice: false)
-            show = true
-        } label: {
-            Image(systemName: "sparkles")
-        }
-        .accessibilityLabel(L("Ассистент"))
-        .sheet(isPresented: $show) {
-            AssistantView(isSheet: true)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-    }
-}
-
-/// "‹ Ноябрь 2026 ›" period switcher with kind menu.
-struct PeriodSwitcher: View {
-    @Environment(Store.self) private var store
-    @State private var showCustom = false
-
-    var body: some View {
-        @Bindable var store = store
-        let cal = store.calendar
-        HStack(spacing: 6) {
-            Button { step(-1) } label: { Image(systemName: "chevron.left").frame(width: 34, height: 34) }
-                .disabled(!store.period.canStep)
-                .accessibilityIdentifier("period-prev")
-            Menu {
-                ForEach([PeriodKind.week, .month, .year, .all], id: \.self) { k in
-                    Button {
-                        withAnimation(.snappy) { store.period = Period.containing(Date(), kind: k, calendar: cal) }
-                    } label: {
-                        if store.period.kind == k { Label(Fmt.kindName(k), systemImage: "checkmark") } else { Text(Fmt.kindName(k)) }
-                    }
-                }
-                Button(Fmt.kindName(.custom) + "…") { showCustom = true }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(Fmt.periodTitle(store.period, calendar: cal))
-                        .font(.subheadline.weight(.semibold))
-                        .contentTransition(.numericText())
-                    Image(systemName: "chevron.down").font(.caption2.weight(.bold))
-                }
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(Palette.bubble, in: Capsule())
-            }
-            .accessibilityIdentifier("period-menu")
-            Button { step(1) } label: { Image(systemName: "chevron.right").frame(width: 34, height: 34) }
-                .disabled(!store.period.canStep)
-                .accessibilityIdentifier("period-next")
-        }
-        .font(.subheadline.weight(.semibold))
-        .tint(.primary)
-        .sheet(isPresented: $showCustom) { CustomPeriodSheet().presentationDetents([.medium]) }
-        .gesture(DragGesture(minimumDistance: 30).onEnded { v in
-            if v.translation.width < -40 { step(1) } else if v.translation.width > 40 { step(-1) }
-        })
-    }
-
-    func step(_ n: Int) {
-        guard store.period.canStep else { return }
-        Haptics.select(enabled: store.data.settings.haptics)
-        withAnimation(.snappy) { store.period = store.period.shifted(by: n, calendar: store.calendar) }
-    }
-}
-
-struct CustomPeriodSheet: View {
-    @Environment(Store.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    @State private var from = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
-    @State private var to = Date()
-    var body: some View {
-        NavigationStack {
-            Form {
-                DatePicker(L("С"), selection: $from, displayedComponents: .date)
-                DatePicker(L("По"), selection: $to, displayedComponents: .date)
-            }
-            .navigationTitle(L("Свой период"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(L("Отмена")) { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(L("Готово")) {
-                        withAnimation(.snappy) { store.period = Period.custom(from: from, to: to, calendar: store.calendar) }
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// One transaction row card.
-struct TransactionRow: View {
-    @Environment(Store.self) private var store
-    var tx: Txn
-
-    var body: some View {
-        let cat = store.data.category(tx.categoryID)
-        let wallet = store.data.wallet(tx.walletID)
-        HStack(spacing: 12) {
-            if tx.isTransfer {
-                TransferIcon(size: 42)
-            } else {
-                CategoryIconView(category: cat, size: 42)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(tx.isTransfer ? L("Перевод") : (cat?.name ?? L("Без категории"))).font(.subheadline.weight(.semibold)).lineLimit(1)
-                HStack(spacing: 4) {
-                    Image(systemName: tx.isTransfer ? "arrow.left.arrow.right" : (wallet?.symbol ?? "wallet.pass")).font(.caption2)
-                    Text(tx.isTransfer ? Fmt.route(tx, store.data) : (wallet?.name ?? "—"))
-                    if !tx.note.isEmpty { Text("·"); Text(tx.note).lineLimit(1) }
-                }
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(Fmt.signed(tx))
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Palette.amount(tx.kind))
-                if tx.currency != store.data.settings.baseCurrency,
-                   let conv = store.data.settings.converter.convert(tx.amountMinor, from: tx.currency, to: store.data.settings.baseCurrency) {
-                    Text("≈ " + Fmt.money(conv, store.data.settings.baseCurrency)).font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    Text(Fmt.time(tx.date)).font(.caption2).foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .padding(.vertical, 10).padding(.horizontal, 14)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .spendCard(radius: 24)
     }
 }
 
@@ -317,3 +496,19 @@ struct ShareSheet: UIViewControllerRepresentable {
 }
 
 struct IdentifiableURL: Identifiable { let url: URL; var id: String { url.absoluteString } }
+
+/// Capsule chip (labels, date, wallet).
+struct Chip: View {
+    var text: String
+    var systemImage: String? = nil
+    var selected = false
+    var body: some View {
+        HStack(spacing: 5) {
+            if let systemImage { Image(systemName: systemImage).font(.system(size: 13, weight: .semibold)) }
+            Text(text).font(.system(size: 15, weight: .medium)).lineLimit(1)
+        }
+        .foregroundStyle(selected ? Color.white : Color.primary)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(selected ? Palette.accent : Palette.bubble.opacity(0.85), in: Capsule())
+    }
+}

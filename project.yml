@@ -19,9 +19,11 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Groshi
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleDisplayName: "WorkFlow Spend"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "2"
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         CFBundleDevelopmentRegion: ru
         CFBundleLocalizations: [ru, uk, en]
         UILaunchScreen:
