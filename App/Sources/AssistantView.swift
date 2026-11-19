@@ -188,7 +188,8 @@ struct AssistantView: View {
         NavigationLink { AISettingsView() } label: {
             HStack {
                 Image(systemName: "key.fill").foregroundStyle(.orange)
-                Text(L("Добавьте ключ OpenAI, чтобы ассистент заработал")).font(.subheadline).foregroundStyle(.primary)
+                Text(L("Добавьте ключ OpenAI, чтобы ассистент заработал")).font(.subheadline)
+                    .multilineTextAlignment(.leading).foregroundStyle(Color.primary)
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(.tertiary)
             }
