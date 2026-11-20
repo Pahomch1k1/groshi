@@ -61,7 +61,9 @@ struct RootView: View {
                 }
                 .accessibilityIdentifier("add-button")
                 .padding(.trailing, 18)
-                .padding(.bottom, 72)
+                // Rises above the "Added / Undo" toast so it is never covered by it.
+                .padding(.bottom, store.toast == nil ? 72 : 128)
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.toast == nil)
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
