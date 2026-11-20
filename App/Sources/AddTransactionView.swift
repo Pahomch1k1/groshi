@@ -240,18 +240,7 @@ struct AddTransactionView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
             ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 10) {
-                    ForEach(store.data.categories(of: kind == .income ? .income : .expense)) { c in
-                        Button { pick(c) } label: {
-                            VStack(spacing: 5) {
-                                CategoryIconView(category: c, size: 52, style: .white)
-                                Text(c.name).font(.system(size: 12)).foregroundStyle(Palette.textSecondary)
-                                    .lineLimit(1).minimumScaleFactor(0.92)
-                            }
-                        }
-                        .buttonStyle(PressableStyle(scale: 0.9))
-                        .accessibilityIdentifier("category-\(c.name)")
-                    }
+                CategoryGrid(kind: kind == .income ? .income : .expense, iconSize: 52, onTap: { pick($0) }) {
                     Button { showNewCategory = true } label: {
                         VStack(spacing: 5) {
                             Image(systemName: "plus").font(.system(size: 21, weight: .regular)).foregroundStyle(Palette.accent)
@@ -273,14 +262,9 @@ struct AddTransactionView: View {
         .overlay(alignment: .bottom) { kindBar.padding(.bottom, 8) }
     }
 
-    /// [voice] [Expenses | Income] [Transfer]
+    /// [Expenses | Income] [Transfer]
     var kindBar: some View {
         HStack(spacing: 8) {
-            AssistantToolbarButton(context: nil, startVoice: true, label: AnyView(
-                Image(systemName: "mic.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.accent)
-                    .frame(width: 46, height: 46).background(Palette.card, in: Circle()).shadow(color: Palette.shadow, radius: 6, y: 2)
-            ))
-            .accessibilityIdentifier("add-voice")
             KindSegment(kind: $kind, haptics: haptics)
             Button {
                 Haptics.select(enabled: haptics)

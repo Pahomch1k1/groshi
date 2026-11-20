@@ -210,29 +210,6 @@ struct PressableStyle: ButtonStyle {
     }
 }
 
-/// Toolbar/header button that opens the assistant (available on every screen, including sheets).
-struct AssistantToolbarButton: View {
-    @Environment(AssistantViewModel.self) private var ai
-    var context: String? = nil
-    var startVoice = false
-    var label: AnyView? = nil
-    @State private var show = false
-    var body: some View {
-        Button {
-            ai.prepare(context: context, startVoice: startVoice)
-            show = true
-        } label: {
-            if let label { label } else { Image(systemName: "sparkles") }
-        }
-        .accessibilityLabel(L("Ассистент"))
-        .sheet(isPresented: $show) {
-            AssistantView(isSheet: true)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-    }
-}
-
 // MARK: Period pager
 
 /// "Oct 2026 | This month": horizontally scrolling periods, the selected one on a white capsule.

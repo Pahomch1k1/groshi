@@ -51,15 +51,17 @@ struct RootView: View {
             tab(.more) { MoreView() }
         }
         .overlay(alignment: .bottomTrailing) {
-            if store.selectedTab != .more {
-                FAB(systemImage: "plus", onLongPress: {
-                    Haptics.success(enabled: store.data.settings.haptics)
-                    ai.openSheet(context: nil, startVoice: true)
-                }) {
-                    Haptics.tap(enabled: store.data.settings.haptics)
-                    showAdd = true
+            // Two independent buttons: manual entry and the AI voice command (one tap starts recording).
+            if store.selectedTab != .more && ai.phase == .idle {
+                VStack(spacing: 12) {
+                    FAB(systemImage: "plus") {
+                        Haptics.tap(enabled: store.data.settings.haptics)
+                        showAdd = true
+                    }
+                    .accessibilityIdentifier("add-button")
+                    AIFab(recording: false) { Task { await ai.startVoice() } }
+                        .accessibilityIdentifier("ai-button")
                 }
-                .accessibilityIdentifier("add-button")
                 .padding(.trailing, 18)
                 // Rises above the "Added / Undo" toast so it is never covered by it.
                 .padding(.bottom, store.toast == nil ? 72 : 128)
@@ -69,6 +71,11 @@ struct RootView: View {
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
+                if ai.phase != .idle {
+                    VoiceDock()
+                        .padding(.horizontal, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 if let t = store.toast {
                     ToastView(toast: t).transition(.move(edge: .bottom).combined(with: .opacity))
                 }

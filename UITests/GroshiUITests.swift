@@ -154,41 +154,88 @@ final class GroshiUITests: XCTestCase {
         XCTAssertTrue(hookah.waitForExistence(timeout: 5))
     }
 
-    /// Assistant UI with a scripted model reply: seven recognised operations → one draft card → one tap saves all → undo.
-    func testAssistantDraftSavesAllAtOnce() {
+    /// Two buttons; one tap on AI starts recording; pauses don't stop it; "Готово" sends; the seven
+    /// operations are saved at once; "Исправить" opens them for editing; "Отменить" removes the whole command.
+    func testVoiceCommandSavesAtOnceFixAndUndo() {
         app.launchArguments += ["-uiTestAI"]
+        app.launch()
+        let add = app.buttons["add-button"], aiButton = app.buttons["ai-button"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        XCTAssertTrue(aiButton.exists, "two separate floating buttons")
+        XCTAssertGreaterThan(aiButton.frame.minY, add.frame.maxY, "AI button is below +")
+        shot("12-two-buttons")
+
+        // Cancel: nothing is sent.
+        aiButton.tap()
+        XCTAssertTrue(app.buttons["voice-cancel"].waitForExistence(timeout: 5))
+        app.buttons["voice-cancel"].tap()
+        XCTAssertTrue(waitFor { !self.app.buttons["voice-stop"].exists })
+        XCTAssertTrue(aiButton.waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 0)
+
+        // Record with a long pause: still recording after 5 s.
+        aiButton.tap()
+        let stop = app.buttons["voice-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["voice-timer"].exists)
+        sleep(5)
+        XCTAssertTrue(stop.exists, "a pause does not end the recording")
+        shot("13-voice-recording")
+        stop.tap()
+        let title = app.staticTexts["saved-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertTrue(title.label.contains("7"), title.label)
+        XCTAssertFalse(app.buttons["pending-confirm"].exists, "no confirmation step")
+        XCTAssertTrue(waitFor { self.rows.count >= 7 }, "rows: \(rows.count)")
+        sleep(1)
+        shot("14-voice-saved")
+
+        // Fix: rows become editable.
+        app.buttons["saved-fix"].tap()
+        let savedRows = app.buttons.matching(identifier: "saved-row")
+        XCTAssertTrue(waitFor { savedRows.count == 7 }, "saved rows: \(savedRows.count)")
+        shot("15-voice-fix")
+        savedRows.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5), "manual edit opens")
+        app.buttons["add-close"].tap()
+
+        // Undo removes the whole command.
+        XCTAssertTrue(app.buttons["saved-undo"].waitForExistence(timeout: 5))
+        app.buttons["saved-undo"].tap()
+        XCTAssertTrue(waitFor { self.rows.count == 0 }, "rows after undo: \(rows.count)")
+    }
+
+    /// Press and hold a category, drag it to another place; the order is shared and survives a restart.
+    func testCategoryDragReorderPersists() {
         app.launch()
         let add = app.buttons["add-button"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
-        add.press(forDuration: 1.0) // long press opens the assistant
-        let input = app.textViews["assistant-input"].exists ? app.textViews["assistant-input"] : app.textFields["assistant-input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 5))
-        input.tap()
-        input.typeText("За вчера тысяча на развлечения, 450 на пиццу, 300 продукты, 1500 бензин, 200 такси, сегодня 800 ресторан и зарплата 15 тысяч")
-        app.buttons["assistant-send"].tap()
-        let save = app.buttons["pending-confirm"]
-        XCTAssertTrue(save.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "draft-row").count, 7)
-        XCTAssertTrue(save.label.contains("7"), save.label)
+        add.tap()
+        let food = app.buttons["category-Продукты"], transport = app.buttons["category-Транспорт"]
+        XCTAssertTrue(food.waitForExistence(timeout: 5))
+        XCTAssertLessThan(food.frame.minX, transport.frame.minX)
+        food.press(forDuration: 0.8, thenDragTo: transport)
         sleep(1)
-        shot("12-assistant-draft")
-        save.tap()
-        let undo = app.buttons["assistant-undo"]
-        XCTAssertTrue(undo.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["pending-confirm"].exists, "the draft card disappears after saving")
-        sleep(1)
-        shot("13-assistant-saved")
-        // All seven are in the app: Home lists them.
-        app.buttons["Закрыть"].tap()
-        let rows = app.descendants(matching: .any).matching(identifier: "tx-row")
-        XCTAssertTrue(waitFor { rows.count >= 7 }, "rows: \(rows.count)")
-        shot("14-home-after-voice")
-        // One undo removes the whole batch.
-        add.press(forDuration: 1.0)
-        XCTAssertTrue(app.buttons["assistant-undo"].waitForExistence(timeout: 5))
-        app.buttons["assistant-undo"].tap()
-        app.buttons["Закрыть"].tap()
-        XCTAssertTrue(waitFor { rows.count == 0 }, "rows after undo: \(rows.count)")
+        XCTAssertGreaterThan(food.frame.minX, transport.frame.minX, "Продукты moved after Транспорт")
+        shot("16-category-dragged")
+        app.buttons["add-close"].tap()
+
+        // Same order in More → Categories.
+        app.descendants(matching: .any)["tab-more"].tap()
+        app.buttons["more-categories"].tap()
+        let food2 = app.buttons["category-Продукты"], transport2 = app.buttons["category-Транспорт"]
+        XCTAssertTrue(food2.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(food2.frame.minX, transport2.frame.minX)
+        shot("17-categories-order")
+
+        // Restart without resetting the data.
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_UA"]
+        app.launch()
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.tap()
+        XCTAssertTrue(food.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(food.frame.minX, transport.frame.minX, "order survives a restart")
     }
 
     func waitFor(timeout: TimeInterval = 5, _ cond: () -> Bool) -> Bool {

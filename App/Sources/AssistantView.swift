@@ -16,18 +16,25 @@ final class AssistantViewModel {
         var retry: String? = nil
     }
 
+    /// The floating voice panel on the main screen.
+    enum Phase: Equatable { case idle, recording, thinking, result }
+
     var messages: [Message] = []
     var input = ""
     var busy = false
     var sheetVisible = false
     var context: String?
-    var startVoiceOnOpen = false
-    /// The draft / action waiting for "да" or the button (mirrors the engine).
+    /// The action waiting for "да" or the button (a possible duplicate, a mass change, a deletion).
     var pending: PendingAction?
-    /// Set by the view while the assistant screen is on screen.
-    var onScreen = false
+    var phase: Phase = .idle
+    /// Result of the latest command for the voice panel.
+    var lastReply = ""
+    var lastError: String?
+    var lastCommand: String?
+    /// Message (in `messages`) holding the operations saved by the latest command.
+    var lastSavedID: UUID?
+    var correcting = false
     let speech = SpeechRecognizer()
-    @ObservationIgnored let speaker = Speaker()
     let store: Store
     @ObservationIgnored private var engine: AssistantEngine!
 
@@ -40,92 +47,119 @@ final class AssistantViewModel {
             undo: { [unowned store] in store.undo() },
             isValidSymbol: { UIImage(systemName: $0) != nil })
         engine = AssistantEngine(transport: transport, host: host, calendar: store.calendar, replyLanguage: Lang.aiReplyLanguage)
-        speech.onFinish = { [weak self] text in
-            Task { @MainActor in await self?.voiceFinished(text) }
-        }
     }
 
     /// Works out of the box through the WorkFlow Spend server; no key setup needed.
     var hasKey: Bool { true }
     var settings: AISettings { store.data.settings.ai }
 
-    func prepare(context: String?, startVoice: Bool) {
-        self.context = context
-        self.startVoiceOnOpen = startVoice && !ScriptedTransport.isOn // no microphone in UI tests
-    }
+    var lastSaved: Message? { messages.first { $0.id == lastSavedID } }
 
-    func openSheet(context: String?, startVoice: Bool = false) {
-        prepare(context: context, startVoice: startVoice)
+    func openSheet(context: String? = nil) {
+        self.context = context
         sheetVisible = true
     }
 
     func newChat() {
-        stopVoice()
+        speech.cancel()
         engine.reset()
-        withAnimation(.snappy) { messages = []; pending = nil }
+        withAnimation(.snappy) { messages = []; pending = nil; phase = .idle; lastSavedID = nil }
     }
 
-    /// Screen closed: stop the microphone and the voice, keep the conversation.
-    func stopVoice() {
+    // MARK: Voice (one tap starts, the stop button sends, ✕ cancels)
+
+    func startVoice(context: String? = nil) async {
+        guard phase != .recording, !busy else { return }
+        if let context { self.context = context }
+        Haptics.tap(enabled: store.data.settings.haptics)
+        lastError = nil
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { phase = .recording; correcting = false }
+        await speech.start(locale: settings.voiceLocale)
+        if let e = speech.error {
+            lastError = e
+            withAnimation { phase = .result }
+        }
+    }
+
+    func finishVoice() async {
+        guard phase == .recording else { return }
+        let text = await speech.stop()
+        guard !text.isEmpty else {
+            withAnimation { phase = lastReply.isEmpty && lastSavedID == nil ? .idle : .result }
+            return
+        }
+        await send(text)
+    }
+
+    func cancelVoice() {
         speech.cancel()
-        speaker.stop()
+        context = nil
+        withAnimation(.snappy) { phase = .idle }
+    }
+
+    func closePanel() {
+        if speech.isRecording { speech.cancel() }
+        withAnimation(.snappy) { phase = .idle; correcting = false }
     }
 
     // MARK: Conversation
 
-    func send(_ textOverride: String? = nil, byVoice: Bool = false) async {
+    func send(_ textOverride: String? = nil) async {
         let text = (textOverride ?? input).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
-        speaker.stop()
         input = ""
-        withAnimation(.snappy) { messages.append(Message(role: .user, text: text)) }
+        lastCommand = text
+        lastError = nil
+        withAnimation(.snappy) {
+            messages.append(Message(role: .user, text: text))
+            phase = .thinking
+            correcting = false
+        }
         busy = true
         engine.calendar = store.calendar
         engine.replyLanguage = Lang.aiReplyLanguage
         var prompt = text
         if let c = context { prompt = "[Context: \(c)]\n" + text; context = nil }
-        var reply = ""
         do {
             let r = try await engine.send(prompt)
             busy = false
             handle(r.events)
-            reply = r.interrupted ? L("Связь прервалась, но изменения уже сохранены — повторять команду не нужно.") : r.reply
-            if !reply.isEmpty {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { messages.append(Message(role: .assistant, text: reply)) }
+            let reply = r.interrupted ? L("Связь прервалась, но изменения уже сохранены — повторять команду не нужно.") : r.reply
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                lastReply = reply
+                if !reply.isEmpty { messages.append(Message(role: .assistant, text: reply)) }
+                phase = .result
             }
         } catch {
             busy = false
-            withAnimation { messages.append(Message(role: .error, text: error.localizedDescription, retry: text)) }
+            withAnimation {
+                lastError = error.localizedDescription
+                lastReply = ""
+                messages.append(Message(role: .error, text: error.localizedDescription, retry: text))
+                phase = .result
+            }
             Haptics.error(enabled: store.data.settings.haptics)
-            return
-        }
-        if byVoice { respondAloud(reply) }
-    }
-
-    /// Speaks the reply and, if the assistant waits for an answer, listens again.
-    func respondAloud(_ reply: String) {
-        let expectsAnswer = pending != nil || reply.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
-        let listenAgain: () -> Void = { [weak self] in
-            guard let self, self.settings.handsFree, expectsAnswer, self.onScreen else { return }
-            Task { await self.speech.start(locale: self.settings.voiceLocale) }
-        }
-        if settings.speakReplies {
-            speaker.speak(reply, locale: settings.voiceLocale, then: listenAgain)
-        } else {
-            listenAgain()
         }
     }
 
     func handle(_ events: [AssistantEvent]) {
+        var newSaved: [Txn] = []
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             for e in events {
                 switch e {
-                case .saved(let txs): messages.append(Message(role: .saved, text: "", txs: txs))
+                case .saved(let txs): newSaved += txs
                 case .applied(let s): messages.append(Message(role: .saved, text: s))
                 case .undone(let s): messages.append(Message(role: .undone, text: s))
                 case .pending(let p): pending = p
                 case .resolved(let id, _): if pending?.id == id { pending = nil }
                 }
+            }
+            if !newSaved.isEmpty {
+                let m = Message(role: .saved, text: "", txs: newSaved)
+                messages.append(m)
+                lastSavedID = m.id
+            } else if events.contains(where: { if case .undone = $0 { return true }; return false }) {
+                lastSavedID = nil
             }
         }
         if events.contains(where: { if case .saved = $0 { return true }; if case .applied = $0 { return true }; return false }) {
@@ -134,48 +168,41 @@ final class AssistantViewModel {
     }
 
     func confirmPending() {
-        speaker.stop()
-        speech.cancel()
         do { handle(try engine.confirmPending()) } catch {
             withAnimation { messages.append(Message(role: .error, text: Store.describe(error))) }
         }
     }
 
     func cancelPending() {
-        speaker.stop()
-        speech.cancel()
         handle(engine.cancelPending())
         withAnimation { messages.append(Message(role: .undone, text: L("Ничего не сохранено"))) }
     }
 
-    func removeDraftItem(_ index: Int) {
-        do { handle(try engine.removeDraftItem(at: index)) } catch {
-            withAnimation { messages.append(Message(role: .error, text: Store.describe(error))) }
-        }
-    }
-
+    /// "Отменить": removes every operation of that command (even if other changes happened after it).
     func undo(_ msg: Message) {
         guard let i = messages.firstIndex(where: { $0.id == msg.id }) else { return }
-        if store.undo() != nil {
-            withAnimation(.snappy) { messages[i].resolved = L("Отменено") }
+        if msg.txs.isEmpty {
+            if store.undo() != nil { withAnimation(.snappy) { messages[i].resolved = L("Отменено") } }
+            return
+        }
+        let ids = msg.txs.map { $0.id }.filter { id in store.data.transactions.contains { $0.id == id } }
+        guard !ids.isEmpty || msg.txs.isEmpty else { withAnimation { messages[i].resolved = L("Отменено") }; return }
+        if store.perform(.deleteTransactions(ids), label: L("Отменено операций") + ": \(ids.count)", toast: false) {
+            engine.note("The user removed the \(ids.count) operation(s) just saved with the Undo button")
+            Haptics.success(enabled: store.data.settings.haptics)
+            withAnimation(.snappy) { messages[i].resolved = L("Отменено"); correcting = false }
         }
     }
 
-    // MARK: Voice
-
-    func micTapped() async {
-        if speech.isRecording {
-            speech.stop()
-        } else {
-            speaker.stop()
-            Haptics.tap(enabled: store.data.settings.haptics)
-            await speech.start(locale: settings.voiceLocale)
-        }
+    /// "Исправить" by voice: the next command refers to these operations.
+    func correctByVoice(_ msg: Message) async {
+        let ids = msg.txs.map { String($0.id.uuidString.prefix(8)).lowercased() }.joined(separator: ", ")
+        await startVoice(context: "The user is correcting the operations just saved (ids: \(ids)); change them with update_transactions / delete_transactions, do not add new ones unless asked")
     }
 
-    func voiceFinished(_ text: String) async {
-        guard !text.isEmpty else { return }
-        if settings.autoSendVoice { await send(text, byVoice: true) } else { input = text }
+    /// Current version of operations (after manual edits) for the result panel.
+    func current(_ txs: [Txn]) -> [Txn] {
+        txs.compactMap { t in store.data.transactions.first { $0.id == t.id } }
     }
 }
 
@@ -230,31 +257,11 @@ struct AssistantView: View {
             .toolbar {
                 if isSheet { ToolbarItem(placement: .cancellationAction) { Button(L("Закрыть")) { dismiss() } } }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        let on = !store.data.settings.ai.speakReplies
-                        store.updateSettings { $0.ai.speakReplies = on }
-                        if !on { vm.speaker.stop() }
-                    } label: {
-                        Image(systemName: store.data.settings.ai.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                    }
-                    .accessibilityLabel(L("Озвучивать ответы"))
-                    .accessibilityIdentifier("assistant-speaker")
                     Button { vm.newChat() } label: { Image(systemName: "square.and.pencil") }
                         .disabled(vm.messages.isEmpty && vm.pending == nil)
                 }
             }
             .safeAreaInset(edge: .bottom) { if !isSheet { Color.clear.frame(height: focused ? 0 : 80) } }
-            .task {
-                vm.onScreen = true
-                if vm.startVoiceOnOpen {
-                    vm.startVoiceOnOpen = false
-                    await vm.micTapped()
-                }
-            }
-            .onDisappear {
-                vm.onScreen = false
-                vm.stopVoice()
-            }
         }
     }
 
@@ -320,7 +327,7 @@ struct AssistantView: View {
                     .onSubmit { Task { await vm.send() } }
                     .accessibilityIdentifier("assistant-input")
                 if vm.input.isEmpty {
-                    Button { Task { await vm.micTapped() } } label: {
+                    Button { Task { if vm.phase == .recording { await vm.finishVoice() } else { await vm.startVoice() } } } label: {
                         Image(systemName: vm.speech.isRecording ? "stop.fill" : "mic.fill")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.white)
@@ -367,7 +374,7 @@ struct PendingCard: View {
                 Button {
                     vm.confirmPending()
                 } label: {
-                    Text(pending.isDraft ? L("Сохранить") + (pending.transactions.count > 1 ? " (\(pending.transactions.count))" : "") : L("Подтвердить"))
+                    Text(pending.isDraft ? L("Добавить всё равно") : L("Подтвердить"))
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity).frame(height: 40)
                         .foregroundStyle(.white)
@@ -403,7 +410,7 @@ struct PendingCard: View {
             }
             .padding(.bottom, 2)
             ForEach(Array(txs.enumerated()), id: \.element.id) { i, t in
-                DraftRow(tx: t, duplicate: pending.duplicateIndexes.contains(i)) { vm.removeDraftItem(i) }
+                DraftRow(tx: t, duplicate: pending.duplicateIndexes.contains(i))
             }
         }
     }
@@ -428,7 +435,7 @@ struct DraftRow: View {
     @Environment(Store.self) private var store
     let tx: Txn
     var duplicate = false
-    var remove: () -> Void
+    var remove: (() -> Void)? = nil
 
     var body: some View {
         let cat = store.data.category(tx.categoryID)
@@ -448,12 +455,14 @@ struct DraftRow: View {
             Text(Fmt.code(tx.kind == .expense ? -tx.amountMinor : tx.amountMinor, tx.currency, sign: true))
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(tx.kind == .income ? Palette.income : Color.primary)
-            Button(action: remove) {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30).contentShape(Rectangle())
+            if let remove {
+                Button(action: remove) {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                        .frame(width: 30, height: 30).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("Убрать"))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(L("Убрать"))
         }
         .padding(.vertical, 1)
     }
@@ -595,11 +604,8 @@ struct AISettingsView: View {
                 Picker(L("Язык голоса"), selection: Binding(get: { ai.voiceLocale }, set: { v in store.updateSettings { $0.ai.voiceLocale = v } })) {
                     ForEach(Self.voices, id: \.self) { Text(Self.voiceNames[$0] ?? $0).tag($0) }
                 }
-                Toggle(L("Отправлять сразу после записи"), isOn: Binding(get: { ai.autoSendVoice }, set: { v in store.updateSettings { $0.ai.autoSendVoice = v } }))
-                Toggle(L("Озвучивать ответы"), isOn: Binding(get: { ai.speakReplies }, set: { v in store.updateSettings { $0.ai.speakReplies = v } }))
-                Toggle(L("Слушать ответ после вопроса"), isOn: Binding(get: { ai.handsFree }, set: { v in store.updateSettings { $0.ai.handsFree = v } }))
             } header: { Text(L("Голос")) } footer: {
-                Text(L("Речь распознаётся системой iOS; в OpenAI уходит только текст команды. Запись останавливается сама после паузы. Если ассистент задал вопрос или ждёт «да», микрофон включится снова. Удерживайте «+» на главном экране, чтобы сразу начать запись."))
+                Text(L("Речь распознаётся системой iOS; в OpenAI уходит только текст команды. Нажмите кнопку микрофона на главном экране: запись идёт, пока вы её не остановите, паузы не прерывают её. После остановки команда отправляется сама."))
             }
             Section {
                 DisclosureGroup(L("Свой ключ OpenAI (необязательно)")) {

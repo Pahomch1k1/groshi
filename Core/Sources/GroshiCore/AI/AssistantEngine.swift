@@ -767,3 +767,10 @@ extension DateFormatter {
         return f
     }
 }
+
+extension AssistantEngine {
+    /// Tells the model about a change the user made with a button (shown as a bracketed note).
+    public func note(_ text: String) {
+        history.append(.assistant("[" + text + ".]"))
+    }
+}

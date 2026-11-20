@@ -141,8 +141,7 @@ struct CategoriesView: View {
                     .onMove { from, to in
                         var arr = cats
                         arr.move(fromOffsets: from, toOffset: to)
-                        let muts = arr.enumerated().map { (i, c) -> Mutation in var cc = c; cc.sortOrder = i + 1; return .upsertCategory(cc) }
-                        store.perform(.batch(muts), label: L("Порядок категорий"), toast: false)
+                        store.perform(.reorderCategories(kind: kind, order: arr.map { $0.id }), label: L("Порядок категорий"), toast: false)
                     }
                 }
                 .environment(\.editMode, .constant(.active))
@@ -150,16 +149,7 @@ struct CategoriesView: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         KindSegment(kind: $kind, haptics: store.data.settings.haptics)
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 12) {
-                            ForEach(cats) { c in
-                                Button { editing = c } label: {
-                                    VStack(spacing: 5) {
-                                        CategoryIconView(category: c, size: 50, style: .white)
-                                        Text(c.name).font(.system(size: 12)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.92)
-                                    }
-                                }
-                                .buttonStyle(PressableStyle(scale: 0.9))
-                            }
+                        CategoryGrid(kind: kind, iconSize: 50, spacing: 12, onTap: { editing = $0 }) {
                             Button { creating = true } label: {
                                 VStack(spacing: 5) {
                                     Image(systemName: "plus").font(.system(size: 20)).foregroundStyle(Palette.accent)
@@ -170,6 +160,8 @@ struct CategoriesView: View {
                             .buttonStyle(PressableStyle(scale: 0.9))
                             .accessibilityIdentifier("add-category")
                         }
+                        Text(L("Зажмите категорию и перетащите, чтобы изменить порядок."))
+                            .font(.caption).foregroundStyle(Palette.textTertiary)
                         if !archived.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(L("В архиве")).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.textSecondary).padding(12)
