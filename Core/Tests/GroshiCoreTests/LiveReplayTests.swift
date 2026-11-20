@@ -15,32 +15,61 @@ final class LiveReplayTests: XCTestCase {
         }
     }
 
-    struct Expect: Decodable { var saved: Int?; var pending: Int?; var asks: Bool? }
+    struct Expect: Decodable { var saved: Int?; var pending: Int?; var asks: Bool?; var order: [String]? }
     struct Turn: Decodable { var user: String?; var button: String?; var responses: [ChatMessage]?; var expect: Expect? }
     struct Recording: Decodable { var name: String; var turns: [Turn]; var expectTxs: [String]? }
     struct File: Decodable { var model: String; var recordings: [Recording] }
 
     func testRealModelRepliesThroughSwiftEngine() async throws {
         let file = try JSONDecoder().decode(File.self, from: Data(LiveRecordings.json.utf8))
-        guard !file.recordings.isEmpty else { throw XCTSkip("no live recording for this contract yet") }
+        XCTAssertGreaterThanOrEqual(file.recordings.count, 14)
         let cal = SpendeeFixture.calendar
         let ymd = DateFormatter.ymd(cal)
         for rec in file.recordings {
             let host = TestHost(SpendeeFixture.make())
             let transport = ReplayTransport()
             let engine = AssistantEngine(transport: transport, host: host.host, calendar: cal, now: { SpendeeFixture.now })
+            var created: [UUID] = []
             for turn in rec.turns {
                 if turn.button == "confirm" {
                     _ = try engine.confirmPending()
                     continue
                 }
                 guard let user = turn.user, let responses = turn.responses else { continue }
-                transport.queue = responses
+                // The harness numbers operations 00000001, 00000002… in creation order; map them to the
+                // ids the Swift engine gave the same operations.
+                transport.queue = responses.map { m in
+                    var m = m
+                    m.tool_calls = m.tool_calls?.map { c in
+                        var c = c
+                        var args = c.function.arguments
+                        for (n, id) in created.enumerated().reversed() {
+                            args = args.replacingOccurrences(of: String(format: "\"%08x\"", n + 1), with: "\"\(id.uuidString.prefix(8).lowercased())\"")
+                        }
+                        c.function.arguments = args
+                        return c
+                    }
+                    return m
+                }
+                let prevOrder = host.data.categories(of: .expense).map { $0.name }
                 let r = try await engine.send(user)
                 XCTAssertTrue(transport.queue.isEmpty, "[\(rec.name)] engine stopped early on \"\(user)\"")
                 let e = turn.expect
                 if let s = e?.saved { XCTAssertEqual(host.data.transactions.count, s, "[\(rec.name)] saved after \"\(user)\"") }
                 if let p = e?.pending { XCTAssertEqual(engine.pending?.transactions.count ?? 0, p, "[\(rec.name)] pending after \"\(user)\"") }
+                for t in host.data.transactions where !created.contains(t.id) { created.append(t.id) }
+                let order = host.data.categories(of: .expense).map { $0.name }
+                for rule in e?.order ?? [] {
+                    let parts = rule.split(separator: ":", maxSplits: 1).map(String.init)
+                    let ab = parts[1].split(separator: "=").map(String.init)
+                    let ia = order.firstIndex(of: ab[0]), ib = order.firstIndex(of: ab[1])
+                    switch parts[0] {
+                    case "pos": XCTAssertEqual((ia ?? -1) + 1, Int(ab[1]), "[\(rec.name)] \(rule) → \(order.prefix(8))")
+                    case "after": XCTAssertEqual(ia, ib.map { $0 + 1 }, "[\(rec.name)] \(rule)")
+                    case "swap": XCTAssertTrue(ia == prevOrder.firstIndex(of: ab[1]) && ib == prevOrder.firstIndex(of: ab[0]), "[\(rec.name)] \(rule)")
+                    default: XCTFail("unknown rule \(rule)")
+                    }
+                }
                 if e?.asks == true {
                     XCTAssertFalse(r.events.contains { if case .saved = $0 { return true }; return false }, "[\(rec.name)] should ask, not save")
                     XCTAssertFalse(r.reply.isEmpty)

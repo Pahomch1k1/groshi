@@ -37,10 +37,14 @@ export const scenarios = [
     expectTxs: ["2026-11-11|expense|1000|Games"],
   },
   {
-    name: "seven operations over two days → one confirmation",
+    name: "three operations are saved at once",
+    turns: [{ user: "За 19 ноября добавь 1000 гривен на игры, 500 на такси и 300 на продукты", expect: { saved: 3, pending: 0 } }],
+    expectTxs: ["2026-11-19|expense|1000|Games", "2026-11-19|expense|500|Taxi", "2026-11-19|expense|300|Food"],
+  },
+  {
+    name: "seven operations over two days are saved at once",
     turns: [
-      { user: "За 11 ноября добавь тысячу гривен на игры, 450 на пиццу, 300 в магазин, 1500 на бензин и 200 на такси. За 12 ноября добавь 800 гривен в ресторан и доход 15 тысяч за работу.", expect: { saved: 0, pending: 7 } },
-      { user: "Да, сохраняй", expect: { saved: 7, pending: 0 } },
+      { user: "За 11 ноября добавь тысячу гривен на игры, 450 на пиццу, 300 в магазин, 1500 на бензин и 200 на такси. За 12 ноября добавь 800 гривен в ресторан и доход 15 тысяч за работу.", expect: { saved: 7, pending: 0 } },
     ],
     expectTxs: [
       "2026-11-11|expense|1000|Games", "2026-11-11|expense|450|Restaurant/Cafe/Food", "2026-11-11|expense|300|Food",
@@ -48,36 +52,31 @@ export const scenarios = [
     ],
   },
   {
-    name: "corrections by voice before saving",
+    name: "corrections by voice after saving",
     turns: [
-      { user: "Вчера 450 на пиццу, 300 в магазин и 200 на такси", expect: { saved: 0, pending: 3 } },
-      { user: "Пиццу не 450, а 500, а такси убери", expect: { saved: 0, pending: 2 } },
-      { user: "И ещё добавь 90 на мобильный за то же число", expect: { saved: 0, pending: 3 } },
-      { user: "Подтверждаю", expect: { saved: 3 } },
+      { user: "Вчера 450 на пиццу, 300 в магазин и 200 на такси", expect: { saved: 3 } },
+      { user: "Пиццу не 450, а 500, а такси убери", expect: { saved: 2, pending: 0 } },
+      { user: "И ещё добавь 90 на мобильный за то же число", expect: { saved: 3 } },
     ],
     expectTxs: ["2026-11-19|expense|500|Restaurant/Cafe/Food", "2026-11-19|expense|300|Food", "2026-11-19|expense|90|Mobile number"],
   },
   {
-    name: "cancel a draft",
+    name: "repeated command asks about a duplicate",
     turns: [
-      { user: "Сегодня 120 на кофе и 80 на сигареты", expect: { pending: 2 } },
-      { user: "Нет, не надо, отмена", expect: { saved: 0, pending: 0 } },
+      { user: "Сегодня 120 на кофе и 80 на сигареты", expect: { saved: 2 } },
+      { user: "Сегодня 120 на кофе и 80 на сигареты", expect: { saved: 2, asks: true } },
+      { user: "Нет, это повтор, не добавляй", expect: { saved: 2, pending: 0 } },
     ],
-    expectTxs: [],
+    expectTxs: ["2026-11-20|expense|120|Cafe", "2026-11-20|expense|80|Cigarettes"],
   },
   ...[5, 10, 20, 30].map((n) => {
     const b = bulk(n);
-    return {
-      name: `${n} operations in one command`,
-      turns: [{ user: b.text, expect: { saved: 0, pending: n } }, { button: "confirm" }],
-      expectTxs: b.expect,
-    };
+    return { name: `${n} operations in one command`, turns: [{ user: b.text, expect: { saved: n, pending: 0 } }], expectTxs: b.expect };
   }),
   {
     name: "Ukrainian and English synonyms",
     turns: [
-      { user: "Вчора витратив 300 гривень в аптеці і дві тисячі на одяг", expect: { pending: 2 } },
-      { user: "Так, зберігай", expect: { saved: 2 } },
+      { user: "Вчора витратив 300 гривень в аптеці і дві тисячі на одяг", expect: { saved: 2 } },
       { user: "Spent 500 on a taxi today", expect: { saved: 3 } },
     ],
     expectTxs: ["2026-11-19|expense|300|Pharmacy", "2026-11-19|expense|2000|Clothes", "2026-11-20|expense|500|Taxi"],
@@ -107,5 +106,17 @@ export const scenarios = [
     ],
     expectCategory: "Кальян",
     expectTxs: ["2026-11-20|expense|600|Gas", "2026-11-20|expense|400|Кальян"],
+  },
+  {
+    name: "category order by voice",
+    turns: [
+      { user: "Поставь Games на первое место", expect: { order: ["pos:Games=1"] } },
+      { user: "Перемести Taxi во вторую строку на третье место", expect: { order: ["pos:Taxi=7", "pos:Games=1"] } },
+      { user: "Поставь Cafe после Gas", expect: { order: ["after:Cafe=Gas"] } },
+      { user: "Поменяй местами Food и Gas", expect: { order: ["swap:Food=Gas"] } },
+      { user: "Создай категорию Кальян и поставь её в начало списка", expect: { order: ["pos:Кальян=1"] } },
+    ],
+    expectCategory: "Кальян",
+    expectTxs: [],
   },
 ];

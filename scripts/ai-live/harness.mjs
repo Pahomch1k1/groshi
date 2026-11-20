@@ -57,11 +57,10 @@ function parseItems(S, items, offset) {
   });
 }
 function setDraft(S, txs) {
-  if (!txs.length) { S.pending = null; return { status: "draft_empty", message: "All items were removed; nothing will be saved." }; }
   S.pending = { draft: true, txs };
   const exp = txs.filter((t) => t.kind === "expense").reduce((a, t) => a + t.minor, 0), inc = txs.filter((t) => t.kind === "income").reduce((a, t) => a + t.minor, 0);
   const dups = txs.map((t, i) => (isDup(S, t) ? i + 1 : 0)).filter(Boolean);
-  const r = { status: txs.length === 1 ? "possible_duplicate" : "draft", count: txs.length, total_expense: (exp / 100).toFixed(2) + " UAH", total_income: (inc / 100).toFixed(2) + " UAH", items: numbered(txs), next: "Ask the user to confirm in one short sentence; the list is shown on screen." };
+  const r = { status: "possible_duplicate", count: txs.length, total_expense: (exp / 100).toFixed(2) + " UAH", total_income: (inc / 100).toFixed(2) + " UAH", items: numbered(txs), next: "Nothing saved yet: it looks like a repeat of operations just saved. Ask in one short sentence whether to add them anyway." };
   if (dups.length) r.possible_duplicates_of_saved = dups;
   return r;
 }
@@ -72,35 +71,56 @@ function applyPending(S) {
   apply(S, p.summary, p.run); return p.summary;
 }
 
+// Category order (same rules as CategoryOrder / AssistantEngine.placement in Swift).
+const ofKind = (S, kind) => S.cats.filter((c) => c.kind === kind);
+function placement(S, a, c) {
+  const others = ofKind(S, c.kind).filter((x) => x !== c);
+  if (a.row != null && a.column != null) {
+    if (!(a.row >= 1 && a.column >= 1 && a.column <= 4)) throw new ToolError("row ≥ 1, column 1…4");
+    return (a.row - 1) * 4 + a.column - 1;
+  }
+  if (a.position != null) { if (!(a.position >= 1)) throw new ToolError("position starts at 1"); return a.position - 1; }
+  if (a.after) { const t = catNamed(S, a.after, c.kind); if (!t) throw new ToolError(notFound(S, a.after)); const i = others.indexOf(t); return i < 0 ? null : i + 1; }
+  if (a.before) { const t = catNamed(S, a.before, c.kind); if (!t) throw new ToolError(notFound(S, a.before)); const i = others.indexOf(t); return i < 0 ? null : i; }
+  return null;
+}
+function setKindOrder(S, kind, list) {
+  const rest = S.cats.filter((c) => c.kind !== kind);
+  S.cats = kind === "expense" ? list.concat(rest) : rest.concat(list);
+}
+function moveTo(S, c, index) {
+  const list = ofKind(S, c.kind).filter((x) => x !== c);
+  list.splice(Math.max(0, Math.min(index, list.length)), 0, c);
+  setKindOrder(S, c.kind, list);
+}
+
 function execute(S, name, a) {
   try {
     switch (name) {
       case "add_transactions": {
         if (!a.items?.length) return { status: "error", message: "items required" };
-        const existing = S.pending?.draft ? S.pending.txs : [];
-        const all = existing.concat(parseItems(S, a.items, existing.length));
-        if (all.length === 1 && !isDup(S, all[0])) { apply(S, "Added", () => S.txs.push(all[0])); return { status: "saved", item: describe(all[0]) }; }
-        return setDraft(S, all);
+        const txs = parseItems(S, a.items, 0);
+        if (txs.some((t) => isDup(S, t))) return setDraft(S, txs);
+        apply(S, "Added", () => S.txs.push(...txs));
+        const exp = txs.filter((t) => t.kind === "expense").reduce((s, t) => s + t.minor, 0), inc = txs.filter((t) => t.kind === "income").reduce((s, t) => s + t.minor, 0);
+        return { status: "saved", count: txs.length, total_expense: (exp / 100).toFixed(2) + " UAH", total_income: (inc / 100).toFixed(2) + " UAH",
+          items: txs.map((t) => t.id + " " + describe(t)), next: "Already saved and shown on screen; reply with one short sentence, do not ask to confirm." };
       }
-      case "revise_draft": {
-        if (!S.pending?.draft) return { status: "error", message: "no draft is pending; to change saved operations use find_transactions and update_transactions" };
-        let txs = S.pending.txs.map((t) => ({ ...t }));
-        const removed = new Set();
-        for (const ch of a.changes || []) {
-          const n = ch.number; if (!(n >= 1 && n <= txs.length)) throw new ToolError(`bad item number; the draft has ${txs.length} items`);
-          if (ch.remove) { removed.add(n - 1); continue; }
-          const t = txs[n - 1];
-          if (ch.kind) t.kind = ch.kind;
-          if (ch.currency) t.currency = ch.currency.toUpperCase();
-          if (ch.amount) { const m = money(ch.amount); if (m == null) throw new ToolError(`item ${n}: bad amount`); t.minor = m; }
-          if (ch.category) { const c = catNamed(S, ch.category, t.kind); if (!c) throw new ToolError(`item ${n}: ` + notFound(S, ch.category)); t.category = c.name; }
-          else if (!catNamed(S, t.category, t.kind)) throw new ToolError(`item ${n}: the type changed, also give a ${t.kind} category`);
-          if (ch.date) t.date = ch.date;
-          if (ch.note != null) t.note = ch.note;
+      case "move_category": {
+        const c = catNamed(S, a.name, a.kind || "expense") || catNamed(S, a.name, a.kind);
+        if (!c) return { status: "error", message: notFound(S, a.name) };
+        let what;
+        if (a.swap_with) {
+          const o = catNamed(S, a.swap_with, c.kind); if (!o) return { status: "error", message: notFound(S, a.swap_with) };
+          apply(S, "swap", () => { const l = ofKind(S, c.kind); const i = l.indexOf(c), j = l.indexOf(o); [l[i], l[j]] = [l[j], l[i]]; setKindOrder(S, c.kind, l); });
+          what = `Swapped ${c.name} and ${o.name}`;
+        } else {
+          const target = placement(S, a, c);
+          if (target == null) return { status: "error", message: "give position, row+column, after, before or swap_with" };
+          apply(S, "move", () => moveTo(S, c, target));
+          what = `Moved ${c.name} to position ${ofKind(S, c.kind).indexOf(c) + 1}`;
         }
-        txs = txs.filter((_, i) => !removed.has(i));
-        if (a.add?.length) txs = txs.concat(parseItems(S, a.add, txs.length));
-        return setDraft(S, txs);
+        return { status: "done", summary: what, first_positions: ofKind(S, c.kind).slice(0, 12).map((x) => x.name) };
       }
       case "confirm_pending": if (!S.pending) return { status: "error", message: "nothing is pending" }; return { status: "done", summary: applyPending(S) };
       case "cancel_pending": if (!S.pending) return { status: "error", message: "nothing is pending" }; S.pending = null; return { status: "cancelled" };
@@ -134,7 +154,17 @@ function execute(S, name, a) {
         return { status: "ok", currency: "UAH", count: l.length, total_expense: (e / 100).toFixed(2), total_income: (i / 100).toFixed(2), net: ((i - e) / 100).toFixed(2) };
       }
       case "wallet_balances": return { status: "ok", wallets: [{ wallet: "Mono", currency: "UAH", balance: (S.txs.reduce((s, t) => s + (t.kind === "income" ? t.minor : -t.minor), 0) / 100).toFixed(2) }] };
-      case "create_category": apply(S, `Created category ${a.name}`, () => S.cats.push({ name: a.name, kind: a.kind || "expense" })); return { status: "done", summary: `Created category ${a.name}` };
+      case "create_category": {
+        const kind = a.kind || "expense";
+        if (catNamed(S, a.name, kind)) return { status: "error", message: `Category '${a.name}' already exists; use it (or move_category to place it)` };
+        const c = { name: a.name, kind };
+        let target;
+        S.cats.push(c);
+        try { target = placement(S, a, c); } catch (e) { S.cats.pop(); throw e; }
+        S.cats.pop();
+        apply(S, `Created category ${a.name}`, () => { S.cats.push(c); setKindOrder(S, kind, ofKind(S, kind)); if (target != null) moveTo(S, c, target); });
+        return { status: "done", summary: `Created category ${a.name}` + (target != null ? ` at position ${target + 1}` : "") };
+      }
       case "update_category": { const c = catNamed(S, a.name, a.kind); if (!c) return { status: "error", message: notFound(S, a.name) }; apply(S, `Updated category ${c.name}`, () => { if (a.new_name) c.name = a.new_name; }); return { status: "done", summary: `Updated category ${c.name}` }; }
       case "delete_category": { const c = catNamed(S, a.name, a.kind); if (!c) return { status: "error", message: notFound(S, a.name) }; S.pending = { draft: false, summary: `Delete category ${c.name}`, run: () => { S.cats = S.cats.filter((x) => x !== c); } }; return { status: "awaiting_user_confirmation", summary: `Delete category ${c.name}` }; }
       case "add_transfer": return { status: "error", message: "destination wallet not found; wallets: Mono. Offer to create it with create_wallet." };
@@ -179,7 +209,8 @@ async function send(S, history, text) {
   const responses = [];
   const seen = new Set();
   for (let round = 0; round < 6; round++) {
-    const msg = await complete([{ role: "system", content: contract.system + pendingDescription(S) }, ...history]);
+    const sys = contract.system.replace(/^Expense categories: .*$/m, `Expense categories: ${ofKind(S, "expense").map((c) => c.name).join(", ")}.`).replace(/^Income categories: .*$/m, `Income categories: ${ofKind(S, "income").map((c) => c.name).join(", ")}.`);
+    const msg = await complete([{ role: "system", content: sys + pendingDescription(S) }, ...history]);
     history.push(msg); responses.push(msg);
     if (!msg.tool_calls) return { reply: msg.content || "", responses };
     for (const c of msg.tool_calls) {
@@ -207,6 +238,14 @@ function matches(actual, expected) {
   return { miss, extra: left };
 }
 
+// Order rules: "pos:Games=1", "after:Restaurant=Cafe", "swap:Food=Gas" (relative to the order before the turn).
+function checkOrder(rule, order, prev) {
+  const [type, body] = rule.split(":"); const [a, b] = body.split("=");
+  if (type === "pos") return order.indexOf(a) + 1 === Number(b) ? null : `${a} at ${order.indexOf(a) + 1}, expected ${b}`;
+  if (type === "after") return order.indexOf(a) === order.indexOf(b) + 1 ? null : `${a} not right after ${b}`;
+  if (type === "swap") return order.indexOf(a) === prev.indexOf(b) && order.indexOf(b) === prev.indexOf(a) ? null : `${a} and ${b} not swapped`;
+  return "unknown rule " + rule;
+}
 const results = [];
 const recordings = [];
 let failures = 0;
@@ -215,6 +254,7 @@ for (const sc of scenarios) {
   if (only && !sc.name.includes(only)) continue;
   const S = freshState();
   const history = [];
+  let prevOrder = ofKind(S, "expense").map((c) => c.name);
   const rec = { name: sc.name, turns: [], expectTxs: sc.expectTxs };
   const problems = [];
   console.log(`\n=== ${sc.name}`);
@@ -234,6 +274,8 @@ for (const sc of scenarios) {
       if (ex.pending != null && pend !== ex.pending) problems.push(`after "${turn.user.slice(0, 40)}": pending ${pend}, expected ${ex.pending}`);
       if (ex.asks && (calls.some((c) => c.startsWith("add_")) || !r.reply.trim())) problems.push(`after "${turn.user.slice(0, 40)}": expected a clarifying question, got "${r.reply}" [${calls}]`);
       if (ex.noCreateCategory && calls.includes("create_category")) problems.push("created a category on its own");
+      for (const rule of ex.order || []) { const bad = checkOrder(rule, ofKind(S, "expense").map((c) => c.name), prevOrder); if (bad) problems.push(`after "${turn.user.slice(0, 40)}": ${bad}`); }
+      prevOrder = ofKind(S, "expense").map((c) => c.name);
     }
   }
   if (sc.expectTxs) {
