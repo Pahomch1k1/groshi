@@ -285,6 +285,25 @@ enum Translations {
         "Сколько я потратил на одежду в этом месяце?": ("Скільки я витратив на одяг цього місяця?", "How much did I spend on clothes this month?"),
         "Сравни расходы за октябрь и ноябрь": ("Порівняй витрати за жовтень і листопад", "Compare spending in October and November"),
         "Создай категорию Кальян": ("Створи категорію Кальян", "Create a category Hookah"),
-        "Удали последний расход": ("Видали останню витрату", "Delete the last expense")
+        "Удали последний расход": ("Видали останню витрату", "Delete the last expense"),
+        // 0.3 voice assistant
+        "Связь прервалась, но изменения уже сохранены — повторять команду не нужно.": ("Зв'язок перервався, але зміни вже збережено — повторювати команду не потрібно.", "The connection dropped, but the changes are already saved — no need to repeat the command."),
+        "Ничего не сохранено": ("Нічого не збережено", "Nothing was saved"),
+        "Добавь расход: тысяча гривен на игры": ("Додай витрату: тисяча гривень на ігри", "Add an expense: 1000 UAH on games"),
+        "За 11 ноября: 450 на пиццу, 300 в магазин и 200 на такси": ("За 11 листопада: 450 на піцу, 300 у магазин і 200 на таксі", "For November 11: 450 on pizza, 300 at the store and 200 on a taxi"),
+        "Отмени последнее действие": ("Скасуй останню дію", "Undo the last action"),
+        "Озвучивать ответы": ("Озвучувати відповіді", "Read replies aloud"),
+        "Скажите, что записать": ("Скажіть, що записати", "Say what to record"),
+        "Проверьте и сохраните": ("Перевірте і збережіть", "Check and save"),
+        "дубль?": ("дубль?", "duplicate?"),
+        "Убрать": ("Прибрати", "Remove"),
+        "Повторить": ("Повторити", "Retry"),
+        "Сохранено": ("Збережено", "Saved"),
+        "Сохранено операций": ("Збережено операцій", "Operations saved"),
+        "Сканировать QR-код с ключом": ("Сканувати QR-код із ключем", "Scan the QR code with the key"),
+        "Это не похоже на ключ OpenAI (он начинается с sk-).": ("Це не схоже на ключ OpenAI (він починається з sk-).", "This doesn't look like an OpenAI key (it starts with sk-)."),
+        "gpt-4.1 точнее понимает даты и категории в голосовых командах; gpt-4.1-mini дешевле примерно в 5 раз.": ("gpt-4.1 точніше розуміє дати й категорії в голосових командах; gpt-4.1-mini приблизно в 5 разів дешевша.", "gpt-4.1 understands dates and categories in voice commands more reliably; gpt-4.1-mini is about 5× cheaper."),
+        "Слушать ответ после вопроса": ("Слухати відповідь після запитання", "Listen for the answer after a question"),
+        "Речь распознаётся системой iOS; в OpenAI уходит только текст команды. Запись останавливается сама после паузы. Если ассистент задал вопрос или ждёт «да», микрофон включится снова. Удерживайте «+» на главном экране, чтобы сразу начать запись.": ("Мовлення розпізнає система iOS; в OpenAI йде лише текст команди. Запис зупиняється сам після паузи. Якщо асистент поставив запитання або чекає «так», мікрофон увімкнеться знову. Утримуйте «+» на головному екрані, щоб одразу почати запис.", "Speech is recognised by iOS; only the command text goes to OpenAI. Recording stops by itself after a pause. If the assistant asks a question or waits for a \"yes\", the microphone turns on again. Hold \"+\" on the home screen to start recording right away.")
     ]
 }

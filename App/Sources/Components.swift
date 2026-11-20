@@ -9,7 +9,7 @@ struct CategoryIconView: View {
     @Environment(Store.self) private var store
     var icon: CategoryIcon
     var colorHex: String
-    var size: CGFloat = 40
+    var size: CGFloat = 30
     var style: Style = .pastel
 
     var body: some View {
@@ -19,7 +19,7 @@ struct CategoryIconView: View {
             case .pastel:
                 Circle().fill(LinearGradient(colors: [color.opacity(0.26), color.opacity(0.12)], startPoint: .top, endPoint: .bottom))
             case .white:
-                Circle().fill(Palette.card).shadow(color: Palette.shadow, radius: 6, y: 2)
+                Circle().fill(Palette.card).shadow(color: Palette.shadow, radius: 4, y: 1)
             }
             glyph(color)
         }
@@ -47,7 +47,7 @@ struct CategoryIconView: View {
 }
 
 extension CategoryIconView {
-    init(category: GroshiCore.Category?, size: CGFloat = 40, style: Style = .pastel) {
+    init(category: GroshiCore.Category?, size: CGFloat = 30, style: Style = .pastel) {
         self.icon = category?.icon ?? .symbol("questionmark")
         self.colorHex = category?.colorHex ?? "#8395A7"
         self.size = size
@@ -57,7 +57,7 @@ extension CategoryIconView {
 
 /// Neutral glyph for transfers between own wallets.
 struct TransferIcon: View {
-    var size: CGFloat = 40
+    var size: CGFloat = 30
     var body: some View {
         Image(systemName: "arrow.left.arrow.right")
             .font(.system(size: size * 0.4, weight: .semibold))
@@ -71,7 +71,7 @@ struct TransferIcon: View {
 struct TxIcon: View {
     @Environment(Store.self) private var store
     var tx: Txn
-    var size: CGFloat = 44
+    var size: CGFloat = 34
     var body: some View {
         if tx.isTransfer { TransferIcon(size: size) } else { CategoryIconView(category: store.data.category(tx.categoryID), size: size) }
     }
@@ -79,7 +79,7 @@ struct TxIcon: View {
 
 /// Grey "pick a category" glyph from Spendee's empty entry screen.
 struct CategoryPlaceholderIcon: View {
-    var size: CGFloat = 64
+    var size: CGFloat = 46
     var body: some View {
         ZStack {
             Circle().fill(Palette.card.opacity(0.7))
@@ -120,10 +120,10 @@ struct SpendTabBar: View {
                             .fill(Palette.bubble.opacity(0.9))
                             .matchedGeometryEffect(id: "bubble", in: ns)
                     }
-                    VStack(spacing: 3) {
+                    VStack(spacing: 2) {
                         Image(systemName: active ? item.activeIcon : item.icon)
-                            .font(.system(size: 19, weight: .semibold))
-                            .frame(width: 28, height: 24)
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 24, height: 20)
                         Text(item.title)
                             .font(.system(size: 11, weight: .semibold))
                             .lineLimit(1)
@@ -131,7 +131,7 @@ struct SpendTabBar: View {
                     .foregroundStyle(active ? Palette.accent : Color.primary)
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 56)
+                .frame(height: 48)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     guard selection != item.id else { return }
@@ -143,12 +143,12 @@ struct SpendTabBar: View {
                 .accessibilityIdentifier("tab-\(item.id)")
             }
         }
-        .padding(5)
-        .frame(height: 66)
+        .padding(4)
+        .frame(height: 56)
         .background(.ultraThinMaterial, in: Capsule(style: .continuous))
         .background(Palette.card.opacity(0.55), in: Capsule(style: .continuous))
         .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.10), radius: 20, y: 8)
+        .shadow(color: .black.opacity(0.10), radius: 14, y: 5)
     }
 }
 
@@ -158,7 +158,7 @@ struct SpendTabBar: View {
 struct FAB: View {
     var systemImage: String
     var color: Color = Palette.accent
-    var size: CGFloat = 62
+    var size: CGFloat = 52
     var onLongPress: (() -> Void)? = nil
     var action: () -> Void
     @State private var pressed = false
@@ -169,7 +169,7 @@ struct FAB: View {
             .foregroundStyle(.white)
             .frame(width: size, height: size)
             .background(color, in: Circle())
-            .shadow(color: color.opacity(0.35), radius: 14, y: 6)
+            .shadow(color: color.opacity(0.35), radius: 10, y: 4)
             .scaleEffect(pressed ? 0.9 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.6), value: pressed)
             .contentShape(Circle())
@@ -183,16 +183,18 @@ struct FAB: View {
 /// White circular icon button (header actions, close buttons).
 struct CircleButton: View {
     var systemImage: String
-    var size: CGFloat = 46
+    var size: CGFloat = 36
     var action: () -> Void
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: size * 0.38, weight: .semibold))
+                .font(.system(size: size * 0.4, weight: .semibold))
                 .foregroundStyle(Color.primary)
                 .frame(width: size, height: size)
                 .background(Palette.card.opacity(0.92), in: Circle())
-                .shadow(color: Palette.shadow, radius: 8, y: 3)
+                .shadow(color: Palette.shadow, radius: 6, y: 2)
+                .frame(width: max(size, 44), height: max(size, 44))
+                .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle(scale: 0.9))
     }
@@ -249,12 +251,14 @@ struct PeriodPager: View {
                             ForEach(periods(cal), id: \.start) { p in
                                 let selected = p.start == current.start
                                 Text(label(p, cal))
-                                    .font(.system(size: 15, weight: selected ? .medium : .regular))
+                                    .font(.system(size: 13, weight: selected ? .medium : .regular))
                                     .foregroundStyle(selected ? Color.primary : Palette.textTertiary)
-                                    .padding(.horizontal, 18).padding(.vertical, 9)
+                                    .padding(.horizontal, 14).padding(.vertical, 6)
                                     .background {
-                                        if selected { Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 8, y: 2) }
+                                        if selected { Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 5, y: 2) }
                                     }
+                                    .frame(height: 40)
+                                    .contentShape(Rectangle())
                                     .id(p.start)
                                     .onTapGesture {
                                         Haptics.select(enabled: store.data.settings.haptics)
@@ -263,7 +267,7 @@ struct PeriodPager: View {
                             }
                         }
                         .padding(.horizontal, 60)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 2)
                     }
                     .onAppear { proxy.scrollTo(current.start, anchor: .center) }
                     .onChange(of: current.start) { _, s in withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { proxy.scrollTo(s, anchor: .center) } }
@@ -271,12 +275,14 @@ struct PeriodPager: View {
             } else {
                 Button { showCustom = true } label: {
                     Text(Fmt.periodTitle(current, calendar: cal))
-                        .font(.system(size: 15, weight: .medium)).foregroundStyle(Color.primary)
-                        .padding(.horizontal, 18).padding(.vertical, 9)
-                        .background(Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 8, y: 2))
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.primary)
+                        .padding(.horizontal, 14).padding(.vertical, 6)
+                        .background(Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 5, y: 2))
+                        .frame(height: 40)
+                        .contentShape(Rectangle())
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+                .padding(.vertical, 2)
             }
         }
         .accessibilityIdentifier("period-pager")
@@ -357,30 +363,30 @@ struct TransactionRow: View {
         let cat = data.category(tx.categoryID)
         let multiWallet = data.activeWallets.count > 1
         let subtitle: String? = tx.isTransfer ? Fmt.route(tx, data) : (multiWallet ? data.wallet(tx.walletID)?.name : nil)
-        HStack(alignment: .center, spacing: 14) {
-            TxIcon(tx: tx, size: 46)
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .center, spacing: 12) {
+            TxIcon(tx: tx, size: 34)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(tx.isTransfer ? L("Перевод") : (cat?.name ?? L("Без категории")))
-                    .font(.system(size: 17)).foregroundStyle(Color.primary).lineLimit(1)
+                    .font(.system(size: 15)).foregroundStyle(Color.primary).lineLimit(1)
                 if let subtitle {
                     HStack(spacing: 4) {
                         Image(systemName: tx.isTransfer ? "arrow.left.arrow.right" : "wallet.pass").font(.system(size: 11))
                         Text(subtitle).lineLimit(1)
                     }
-                    .font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
+                    .font(.system(size: 12)).foregroundStyle(Palette.textSecondary)
                 }
                 if !tx.note.isEmpty {
-                    Text(tx.note).font(.system(size: 14)).foregroundStyle(Palette.textSecondary).lineLimit(2)
+                    Text(tx.note).font(.system(size: 12)).foregroundStyle(Palette.textSecondary).lineLimit(2)
                 }
                 if !tx.tags.isEmpty {
                     Text(tx.tags.map { "#" + $0 }.joined(separator: " "))
-                        .font(.system(size: 13)).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                        .font(.system(size: 11)).foregroundStyle(Palette.textTertiary).lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 2) {
                 Text(Fmt.txCode(tx))
-                    .font(.system(size: 17).monospacedDigit())
+                    .font(.system(size: 15).monospacedDigit())
                     .foregroundStyle(tx.kind == .income ? Palette.income : Color.primary)
                     .strikethrough(tx.isExcluded, color: Palette.textTertiary)
                 if tx.recurringID != nil {
@@ -388,8 +394,8 @@ struct TransactionRow: View {
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
@@ -404,15 +410,15 @@ struct DayGroupView: View {
 
     var body: some View {
         let base = store.data.settings.baseCurrency
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(Fmt.dayTitle(group.day, calendar: store.calendar))
                 Spacer()
                 Text(Fmt.code(group.net, base)).monospacedDigit()
             }
-            .font(.system(size: 17, weight: .medium))
+            .font(.system(size: 14, weight: .medium))
             .foregroundStyle(Palette.textSecondary)
-            .padding(.horizontal, 22)
+            .padding(.horizontal, 16)
 
             VStack(spacing: 0) {
                 ForEach(group.items) { tx in
@@ -433,7 +439,7 @@ struct DayGroupView: View {
                         .transition(.asymmetric(insertion: .scale(scale: 0.96).combined(with: .opacity), removal: .opacity))
                 }
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
             .spendCard()
         }
     }
@@ -460,8 +466,8 @@ struct ToastView: View {
                 .accessibilityIdentifier("toast-undo")
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
         .padding(.horizontal, 16)
         .task(id: toast.id) {
@@ -475,13 +481,13 @@ struct ToastView: View {
 
 /// Card container used in settings-like screens.
 struct Card<Content: View>: View {
-    var padding: CGFloat = 16
+    var padding: CGFloat = 12
     @ViewBuilder var content: Content
     var body: some View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .spendCard(radius: 24)
+            .spendCard(radius: 18)
     }
 }
 
@@ -502,12 +508,12 @@ struct Chip: View {
     var systemImage: String? = nil
     var selected = false
     var body: some View {
-        HStack(spacing: 5) {
-            if let systemImage { Image(systemName: systemImage).font(.system(size: 13, weight: .semibold)) }
-            Text(text).font(.system(size: 15, weight: .medium)).lineLimit(1)
+        HStack(spacing: 4) {
+            if let systemImage { Image(systemName: systemImage).font(.system(size: 11, weight: .semibold)) }
+            Text(text).font(.system(size: 13, weight: .medium)).lineLimit(1)
         }
         .foregroundStyle(selected ? Color.white : Color.primary)
-        .padding(.horizontal, 14).padding(.vertical, 8)
+        .padding(.horizontal, 11).padding(.vertical, 6)
         .background(selected ? Palette.accent : Palette.bubble.opacity(0.85), in: Capsule())
     }
 }

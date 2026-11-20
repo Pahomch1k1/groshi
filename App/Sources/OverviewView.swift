@@ -25,28 +25,30 @@ struct OverviewView: View {
                         Spacer()
                         Button { showFilter = true } label: {
                             Image(systemName: "line.3.horizontal.decrease")
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(filter.isActive ? Palette.accent : Color.primary)
-                                .frame(width: 50, height: 50)
+                                .frame(width: 40, height: 40)
                                 .background(Palette.card, in: Circle())
-                                .shadow(color: Palette.shadow, radius: 10, y: 3)
+                                .shadow(color: Palette.shadow, radius: 7, y: 2)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(PressableStyle(scale: 0.9))
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 4)
                     Text(L("Обзор"))
-                        .font(.system(size: 34, weight: .bold))
-                        .padding(.top, 8)
+                        .font(.system(size: 28, weight: .bold))
+                        .padding(.top, 2)
                     PeriodPager()
                         .padding(.horizontal, -16)
-                        .padding(.top, 10)
+                        .padding(.top, 6)
 
                     BreakdownCard(kind: .expense, txs: txs, total: totals.expense, previous: prevTotals?.expense) { route in path.append(route) }
-                        .padding(.top, 14)
+                        .padding(.top, 10)
                     BreakdownCard(kind: .income, txs: txs, total: totals.income, previous: prevTotals?.income) { route in path.append(route) }
-                        .padding(.top, 16)
+                        .padding(.top, 12)
                     CashFlowCard(txs: txs, totals: totals, base: base)
-                        .padding(.top, 16)
+                        .padding(.top, 12)
                 }
                 .padding(.horizontal, 16)
             }
@@ -83,56 +85,60 @@ struct BreakdownCard: View {
             return DonutSlice(id: s.categoryID, value: s.amountMinor, colorHex: c?.colorHex ?? "#8395A7",
                               icon: c?.icon ?? .symbol("tag.fill"), percent: s.percentText, basisPoints: s.basisPoints)
         }
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Button { navigate(.breakdown(kind)) } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     Text(kind == .expense ? L("Расходы") : L("Доходы"))
-                    Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
                 }
-                .font(.system(size: 19, weight: .medium))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(Palette.textSecondary)
+                .frame(minHeight: 32)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             Text(Fmt.code(kind == .expense ? -total : total, base))
-                .font(.system(size: 30, weight: .bold).monospacedDigit())
+                .font(.system(size: 24, weight: .bold).monospacedDigit())
                 .contentTransition(.numericText(value: Double(total)))
                 .accessibilityIdentifier(kind == .expense ? "overview-total" : "overview-income-total")
             if let prev = previous, prev > 0 {
                 let pct = Int((Double(total - prev) / Double(prev) * 100).rounded())
                 let up = pct >= 0
                 let good = kind == .expense ? !up : up
-                HStack(spacing: 6) {
-                    Image(systemName: up ? "chevron.up" : "chevron.down").font(.system(size: 13, weight: .bold))
-                    Text("\(abs(pct)) %").font(.system(size: 16, weight: .semibold))
-                    Text(L("к прошлому периоду")).font(.system(size: 16)).foregroundStyle(Palette.textTertiary)
+                HStack(spacing: 4) {
+                    Image(systemName: up ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold))
+                    Text("\(abs(pct)) %").font(.system(size: 13, weight: .semibold))
+                    Text(L("к прошлому периоду")).font(.system(size: 13)).foregroundStyle(Palette.textTertiary)
                 }
                 .foregroundStyle(good ? Palette.income : Palette.expense)
             }
             if slices.isEmpty {
-                Text(L("Нет данных за период")).foregroundStyle(Palette.textSecondary)
-                    .frame(maxWidth: .infinity).padding(.vertical, 50)
+                Text(L("Нет данных за период")).font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 34)
             } else {
                 DonutWithIcons(slices: slices) { navigate(.category($0)) }
-                    .frame(height: 350)
-                    .padding(.top, 4)
+                    .frame(height: 250)
+                    .padding(.top, 2)
                 legend(shares.prefix(4).map { $0.categoryID })
                     .padding(.top, 2)
             }
         }
-        .padding(22)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .spendCard(radius: 30)
+        .spendCard(radius: 22)
     }
 
     func legend(_ ids: [UUID]) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             ForEach(ids, id: \.self) { id in
                 let c = store.data.category(id)
                 Button { navigate(.category(id)) } label: {
-                    HStack(spacing: 6) {
-                        Circle().fill(Color(hex: c?.colorHex ?? "#8395A7")).frame(width: 10, height: 10)
-                        Text(c?.name ?? "").font(.system(size: 16)).foregroundStyle(Color.primary).lineLimit(1)
+                    HStack(spacing: 4) {
+                        Circle().fill(Color(hex: c?.colorHex ?? "#8395A7")).frame(width: 8, height: 8)
+                        Text(c?.name ?? "").font(.system(size: 13)).foregroundStyle(Color.primary).lineLimit(1)
                     }
+                    .frame(minHeight: 32)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -150,29 +156,29 @@ struct CashFlowCard: View {
     var body: some View {
         let buckets = Analytics.buckets(txs, period: store.period, data: store.data, calendar: store.calendar)
         let groups = Self.groups(buckets, yearly: store.period.kind == .year)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
                 Text(L("Денежный поток"))
-                Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold))
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
             }
-            .font(.system(size: 19, weight: .medium))
+            .font(.system(size: 15, weight: .medium))
             .foregroundStyle(Palette.textSecondary)
             Text(Fmt.code(totals.net, base))
-                .font(.system(size: 30, weight: .bold).monospacedDigit())
+                .font(.system(size: 24, weight: .bold).monospacedDigit())
                 .contentTransition(.numericText(value: Double(totals.net)))
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 AmountPill(sign: "plus", minor: totals.income, base: base, color: Palette.income)
                 AmountPill(sign: "minus", minor: totals.expense, base: base, color: Palette.expense)
             }
             if !groups.isEmpty {
                 GroupedBarsChart(groups: groups, currency: base, showLabels: groups.count <= 12)
-                    .frame(height: 170)
-                    .padding(.top, 10)
+                    .frame(height: 120)
+                    .padding(.top, 6)
             }
         }
-        .padding(22)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .spendCard(radius: 30)
+        .spendCard(radius: 22)
     }
 
     static func groups(_ buckets: [Analytics.Bucket], yearly: Bool) -> [BarGroup] {
@@ -201,16 +207,16 @@ struct BreakdownListView: View {
                 ForEach(shares) { s in
                     let c = data.category(s.categoryID)
                     Button { open(s.categoryID) } label: {
-                        HStack(spacing: 14) {
-                            CategoryIconView(category: c, size: 44)
-                            VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 12) {
+                            CategoryIconView(category: c, size: 34)
+                            VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(c?.name ?? "—").font(.system(size: 17)).foregroundStyle(Color.primary)
-                                    Text("\(s.count)").font(.system(size: 14)).foregroundStyle(Palette.textTertiary)
+                                    Text(c?.name ?? "—").font(.system(size: 15)).foregroundStyle(Color.primary)
+                                    Text("\(s.count)").font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
                                     Spacer()
-                                    Text(Fmt.code(s.amountMinor, base)).font(.system(size: 17).monospacedDigit()).foregroundStyle(Color.primary)
+                                    Text(Fmt.code(s.amountMinor, base)).font(.system(size: 15).monospacedDigit()).foregroundStyle(Color.primary)
                                 }
-                                HStack(spacing: 8) {
+                                HStack(spacing: 6) {
                                     GeometryReader { geo in
                                         ZStack(alignment: .leading) {
                                             Capsule().fill(Palette.bubble)
@@ -218,19 +224,19 @@ struct BreakdownListView: View {
                                                 .frame(width: max(4, geo.size.width * CGFloat(s.amountMinor) / CGFloat(max(maxV, 1))))
                                         }
                                     }
-                                    .frame(height: 6)
-                                    Text(s.percentText).font(.system(size: 13).monospacedDigit()).foregroundStyle(Palette.textSecondary)
-                                        .frame(width: 50, alignment: .trailing)
+                                    .frame(height: 5)
+                                    Text(s.percentText).font(.system(size: 12).monospacedDigit()).foregroundStyle(Palette.textSecondary)
+                                        .frame(width: 44, alignment: .trailing)
                                 }
                             }
                         }
-                        .padding(.horizontal, 18).padding(.vertical, 12)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("share-row")
                 }
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
             .spendCard()
             .padding(16)
         }
@@ -256,23 +262,23 @@ struct CategoryTransactionsView: View {
         let cat = store.data.category(categoryID)
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                VStack(spacing: 10) {
-                    CategoryIconView(category: cat, size: 76, style: .white)
-                    Text(cat?.name ?? "").font(.system(size: 18, weight: .medium))
+                VStack(spacing: 6) {
+                    CategoryIconView(category: cat, size: 54, style: .white)
+                    Text(cat?.name ?? "").font(.system(size: 15, weight: .medium))
                     Text(Fmt.code(cat?.kind == .income ? total.income : -total.expense, store.data.settings.baseCurrency))
-                        .font(.system(size: 32, weight: .bold).monospacedDigit())
+                        .font(.system(size: 24, weight: .bold).monospacedDigit())
                     Text(Fmt.periodTitle(store.period, calendar: cal) + " · \(txs.count)")
-                        .font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
+                        .font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
+                .padding(.vertical, 12)
                 .background(
                     LinearGradient(colors: [Palette.pastel(cat?.colorHex ?? "#8395A7", 0.35), Palette.background], startPoint: .top, endPoint: .bottom)
                         .padding(.horizontal, -16).padding(.top, -200)
                 )
                 ForEach(groups) { g in
                     DayGroupView(group: g, onTap: { selected = $0 }, onEdit: { editing = $0 })
-                        .padding(.top, 18)
+                        .padding(.top, 12)
                 }
             }
             .padding(.horizontal, 16)

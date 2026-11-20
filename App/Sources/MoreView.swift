@@ -10,8 +10,8 @@ struct MoreView: View {
         let data = store.data
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(L("Ещё")).font(.system(size: 34, weight: .bold)).padding(.top, 54)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(L("Ещё")).font(.system(size: 28, weight: .bold)).padding(.top, 50)
 
                     group {
                         link(L("Категории"), "square.on.circle", value: "\(data.categories.filter { !$0.isArchived }.count)", id: "more-categories") { CategoriesView() }
@@ -32,7 +32,7 @@ struct MoreView: View {
                         link(L("AI-ассистент"), "sparkles", value: Keychain.hasKey ? nil : L("нет ключа"), id: "more-ai") { AISettingsView() }
                     }
                     Text("WorkFlow Spend " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") + " · " + "\(data.transactions.count) " + L("операций"))
-                        .font(.system(size: 13)).foregroundStyle(Palette.textTertiary)
+                        .font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 4)
                 }
@@ -55,21 +55,21 @@ struct MoreView: View {
 
     func group<C: View>(@ViewBuilder _ content: () -> C) -> some View {
         VStack(spacing: 0) { content() }
-            .padding(.vertical, 8)
+            .padding(.vertical, 4)
             .spendCard()
     }
 
     func link<D: View>(_ title: String, _ icon: String, value: String?, id: String, @ViewBuilder destination: @escaping () -> D) -> some View {
         NavigationLink { destination() } label: {
-            HStack(spacing: 16) {
-                Image(systemName: icon).font(.system(size: 20)).frame(width: 28).foregroundStyle(Color.primary)
-                Text(title).font(.system(size: 18)).foregroundStyle(Color.primary)
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 16)).frame(width: 22).foregroundStyle(Color.primary)
+                Text(title).font(.system(size: 15)).foregroundStyle(Color.primary)
                 Spacer()
-                if let value { Text(value).font(.system(size: 17)).foregroundStyle(Palette.textSecondary) }
-                Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.textSecondary)
+                if let value { Text(value).font(.system(size: 14)).foregroundStyle(Palette.textSecondary) }
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textSecondary)
             }
-            .padding(.horizontal, 20)
-            .frame(height: 60)
+            .padding(.horizontal, 16)
+            .frame(height: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -136,7 +136,7 @@ struct CategoriesView: View {
             if reordering {
                 List {
                     ForEach(cats) { c in
-                        HStack(spacing: 12) { CategoryIconView(category: c, size: 34); Text(c.name) }
+                        HStack(spacing: 12) { CategoryIconView(category: c, size: 28); Text(c.name) }
                     }
                     .onMove { from, to in
                         var arr = cats
@@ -148,23 +148,23 @@ struct CategoriesView: View {
                 .environment(\.editMode, .constant(.active))
             } else {
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 12) {
                         KindSegment(kind: $kind, haptics: store.data.settings.haptics)
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 16) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 12) {
                             ForEach(cats) { c in
                                 Button { editing = c } label: {
-                                    VStack(spacing: 7) {
-                                        CategoryIconView(category: c, size: 68, style: .white)
-                                        Text(c.name).font(.system(size: 14)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.75)
+                                    VStack(spacing: 5) {
+                                        CategoryIconView(category: c, size: 50, style: .white)
+                                        Text(c.name).font(.system(size: 12)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.92)
                                     }
                                 }
                                 .buttonStyle(PressableStyle(scale: 0.9))
                             }
                             Button { creating = true } label: {
-                                VStack(spacing: 7) {
-                                    Image(systemName: "plus").font(.system(size: 26)).foregroundStyle(Palette.accent)
-                                        .frame(width: 68, height: 68).background(Palette.accent.opacity(0.16), in: Circle())
-                                    Text(L("Создать категорию")).font(.system(size: 14)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.7)
+                                VStack(spacing: 5) {
+                                    Image(systemName: "plus").font(.system(size: 20)).foregroundStyle(Palette.accent)
+                                        .frame(width: 50, height: 50).background(Palette.accent.opacity(0.16), in: Circle())
+                                    Text(L("Создать категорию")).font(.system(size: 12)).foregroundStyle(Palette.textSecondary).lineLimit(1).minimumScaleFactor(0.92)
                                 }
                             }
                             .buttonStyle(PressableStyle(scale: 0.9))
@@ -172,19 +172,19 @@ struct CategoriesView: View {
                         }
                         if !archived.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
-                                Text(L("В архиве")).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.textSecondary).padding(16)
+                                Text(L("В архиве")).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.textSecondary).padding(12)
                                 ForEach(archived) { c in
                                     HStack {
-                                        CategoryIconView(category: c, size: 32)
+                                        CategoryIconView(category: c, size: 26)
                                         Text(c.name).foregroundStyle(Palette.textSecondary)
                                         Spacer()
                                         Button(L("Вернуть")) { var cc = c; cc.isArchived = false; store.perform(.upsertCategory(cc), label: L("Категория восстановлена")) }
                                     }
-                                    .padding(.horizontal, 16).padding(.vertical, 8)
+                                    .padding(.horizontal, 12).padding(.vertical, 6)
                                 }
                             }
-                            .padding(.bottom, 8)
-                            .spendCard(radius: 24)
+                            .padding(.bottom, 6)
+                            .spendCard(radius: 18)
                         }
                     }
                     .padding(16)
@@ -278,7 +278,7 @@ struct ScheduledView: View {
             ForEach(rules) { r in
                 let t = r.template
                 HStack(spacing: 12) {
-                    TxIcon(tx: t, size: 40)
+                    TxIcon(tx: t, size: 32)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(t.isTransfer ? L("Перевод") : (store.data.category(t.categoryID)?.name ?? "—"))
                         Text(AddTransactionView.frequencyName(r.frequency) + " · " + L("след.") + " " + Fmt.fullDate(r.nextDate))
@@ -350,8 +350,8 @@ struct WalletsView: View {
                 ForEach(store.data.activeWallets) { w in
                     Button { editing = w } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: w.symbol).foregroundStyle(.white).frame(width: 36, height: 36)
-                                .background(Color(hex: w.colorHex), in: RoundedRectangle(cornerRadius: 10))
+                            Image(systemName: w.symbol).foregroundStyle(.white).frame(width: 30, height: 30)
+                                .background(Color(hex: w.colorHex), in: RoundedRectangle(cornerRadius: 8))
                             VStack(alignment: .leading) {
                                 Text(w.name).foregroundStyle(.primary)
                                 if store.data.defaultWallet?.id == w.id { Text(L("По умолчанию")).font(.caption).foregroundStyle(.secondary) }

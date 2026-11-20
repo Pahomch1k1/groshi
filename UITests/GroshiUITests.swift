@@ -152,6 +152,43 @@ final class GroshiUITests: XCTestCase {
         XCTAssertTrue(hookah.waitForExistence(timeout: 5))
     }
 
+    /// Assistant UI with a scripted model reply: seven recognised operations → one draft card → one tap saves all → undo.
+    func testAssistantDraftSavesAllAtOnce() {
+        app.launchArguments += ["-uiTestAI"]
+        app.launch()
+        let add = app.buttons["add-button"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        add.press(forDuration: 1.0) // long press opens the assistant
+        let input = app.textViews["assistant-input"].exists ? app.textViews["assistant-input"] : app.textFields["assistant-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("За вчера тысяча на развлечения, 450 на пиццу, 300 продукты, 1500 бензин, 200 такси, сегодня 800 ресторан и зарплата 15 тысяч")
+        app.buttons["assistant-send"].tap()
+        let save = app.buttons["pending-confirm"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "draft-row").count, 7)
+        XCTAssertTrue(save.label.contains("7"), save.label)
+        sleep(1)
+        shot("12-assistant-draft")
+        save.tap()
+        let undo = app.buttons["assistant-undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["pending-confirm"].exists, "the draft card disappears after saving")
+        sleep(1)
+        shot("13-assistant-saved")
+        // All seven are in the app: Home lists them.
+        app.buttons["Закрыть"].tap()
+        let rows = app.descendants(matching: .any).matching(identifier: "tx-row")
+        XCTAssertTrue(waitFor { rows.count >= 7 }, "rows: \(rows.count)")
+        shot("14-home-after-voice")
+        // One undo removes the whole batch.
+        add.press(forDuration: 1.0)
+        XCTAssertTrue(app.buttons["assistant-undo"].waitForExistence(timeout: 5))
+        app.buttons["assistant-undo"].tap()
+        app.buttons["Закрыть"].tap()
+        XCTAssertTrue(waitFor { rows.count == 0 }, "rows after undo: \(rows.count)")
+    }
+
     func waitFor(timeout: TimeInterval = 5, _ cond: () -> Bool) -> Bool {
         let end = Date().addingTimeInterval(timeout)
         while Date() < end {

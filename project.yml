@@ -20,8 +20,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: "WorkFlow Spend"
-        CFBundleShortVersionString: "0.2.0"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "3"
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         CFBundleDevelopmentRegion: ru
@@ -33,6 +33,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSMicrophoneUsageDescription: "Микрофон нужен, чтобы диктовать операции ассистенту."
         NSSpeechRecognitionUsageDescription: "Распознавание речи превращает вашу голосовую команду в текст."
+        NSCameraUsageDescription: "Камера нужна только чтобы отсканировать QR-код с ключом OpenAI."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.groshi.ios

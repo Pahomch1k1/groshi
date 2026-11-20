@@ -24,11 +24,11 @@ struct GroupedBarsChart: View {
         let maxV = max(1, groups.map { max($0.income, $0.expense) }.max() ?? 1)
         let top = niceMax(maxV)
         GeometryReader { geo in
-            let labelH: CGFloat = showLabels ? 34 : 0
+            let labelH: CGFloat = showLabels ? 28 : 0
             let plotH = geo.size.height - labelH
             let n = max(groups.count, 1)
             let slot = geo.size.width / CGFloat(n)
-            let barW = min(18, max(3, slot * 0.28))
+            let barW = min(12, max(3, slot * 0.24))
             ZStack(alignment: .topLeading) {
                 // Grid lines with values at their left end.
                 ForEach([0, 0.5, 1.0], id: \.self) { f in
@@ -37,24 +37,24 @@ struct GroupedBarsChart: View {
                         .stroke(Palette.textTertiary.opacity(0.25), lineWidth: 0.6)
                     Text(f == 0 ? "0" : Fmt.compact(Int64(Double(top) * f), currency))
                         .font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
-                        .position(x: 16, y: max(7, y - 8))
+                        .position(x: 14, y: max(7, y - 7))
                 }
                 ForEach(Array(groups.enumerated()), id: \.element.id) { i, g in
                     let cx = slot * (CGFloat(i) + 0.5)
                     let hi = plotH * CGFloat(Double(g.income) / Double(top)) * grow
                     let he = plotH * CGFloat(Double(g.expense) / Double(top)) * grow
                     bar(Palette.income, h: hi, w: barW)
-                        .position(x: cx - barW / 2 - 1.5, y: plotH - hi / 2)
+                        .position(x: cx - barW / 2 - 1, y: plotH - hi / 2)
                     bar(Palette.expense, h: he, w: barW)
-                        .position(x: cx + barW / 2 + 1.5, y: plotH - he / 2)
+                        .position(x: cx + barW / 2 + 1, y: plotH - he / 2)
                     if showLabels {
                         VStack(spacing: 0) {
                             Text(g.top)
                             Text(g.bottom)
                         }
-                        .font(.system(size: 12, weight: g.selected ? .bold : .regular))
+                        .font(.system(size: 11, weight: g.selected ? .bold : .regular))
                         .foregroundStyle(g.selected ? Color.primary : Palette.textTertiary)
-                        .position(x: cx, y: plotH + labelH / 2 + 2)
+                        .position(x: cx, y: plotH + labelH / 2 + 1)
                     }
                     Rectangle().fill(Color.clear).contentShape(Rectangle())
                         .frame(width: slot, height: geo.size.height)
@@ -68,7 +68,7 @@ struct GroupedBarsChart: View {
     }
 
     func bar(_ c: Color, h: CGFloat, w: CGFloat) -> some View {
-        UnevenRoundedRectangle(topLeadingRadius: min(5, w / 2), bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: min(5, w / 2), style: .continuous)
+        UnevenRoundedRectangle(topLeadingRadius: min(4, w / 2), bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: min(4, w / 2), style: .continuous)
             .fill(c)
             .frame(width: w, height: max(h, h > 0 ? 2 : 0))
     }
@@ -99,6 +99,8 @@ struct DonutWithIcons: View {
     var slices: [DonutSlice]
     var onTap: ((UUID) -> Void)? = nil
     @State private var progress: CGFloat = 0
+    /// Diameter of the category icons around the ring; also drives the label spacing in `layoutLabels`.
+    static let iconSize: CGFloat = 24
 
     var body: some View {
         GeometryReader { geo in
@@ -106,8 +108,8 @@ struct DonutWithIcons: View {
             let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
             let rOuter = side * 0.27
             let thickness = rOuter * 0.46
-            let rIcon = rOuter + 30
-            let rText = rOuter + 66
+            let rIcon = rOuter + 22
+            let rText = rOuter + 48
             let total = Double(max(1, slices.reduce(0) { $0 + $1.value }))
             let arcs = arcs(total: total)
             let labels = layoutLabels(arcs: arcs, rIcon: rIcon)
@@ -132,11 +134,11 @@ struct DonutWithIcons: View {
                 ForEach(labels, id: \.slice.id) { l in
                     let ip = point(center, rIcon, l.angle)
                     let tp = point(center, rText, l.angle)
-                    CategoryIconView(icon: l.slice.icon, colorHex: l.slice.colorHex, size: 32)
+                    CategoryIconView(icon: l.slice.icon, colorHex: l.slice.colorHex, size: Self.iconSize)
                         .position(ip)
                         .onTapGesture { onTap?(l.slice.id) }
                     Text(l.slice.percent)
-                        .font(.system(size: 14, weight: .medium).monospacedDigit())
+                        .font(.system(size: 12, weight: .medium).monospacedDigit())
                         .foregroundStyle(Color(hex: l.slice.colorHex))
                         .position(tp)
                 }
@@ -161,8 +163,8 @@ struct DonutWithIcons: View {
     }
 
     func layoutLabels(arcs: [Arc], rIcon: CGFloat) -> [Label] {
-        // Minimum angle between neighbours so 32pt icons (plus air) don't touch.
-        let minSep = 2 * asin(min(1, 40 / (2 * Double(rIcon))))
+        // Minimum angle between neighbours so the icons (plus 6pt of air) don't touch.
+        let minSep = 2 * asin(min(1, Double(Self.iconSize + 6) / (2 * Double(rIcon))))
         let capacity = max(1, Int((2 * .pi) / minSep))
         // Show the biggest slices that fit; tiny ones (<2%) get no label.
         let shown = arcs.filter { $0.slice.basisPoints >= 200 }

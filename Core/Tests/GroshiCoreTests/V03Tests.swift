@@ -75,7 +75,7 @@ final class V03Tests: XCTestCase {
         // The pending draft is in the system prompt of the next request.
         net.queue = [net.call("confirm_pending", "{}"), .assistant("Сохранено 7 операций.")]
         let r2 = try await engine.send("Да")
-        XCTAssertTrue(net.requests.last!.first!.content!.contains("Draft of 7 operation(s)"))
+        XCTAssertTrue(net.requests[net.requests.count - 2].first!.content!.contains("Draft of 7 operation(s)"))
         XCTAssertEqual(t.data.transactions.count, 7)
         XCTAssertEqual(t.data.transactions.filter { $0.kind == .income }.count, 1)
         XCTAssertEqual(Set(t.data.transactions.map { ymd($0.date) }), ["2026-11-11", "2026-11-12"])
@@ -179,7 +179,9 @@ final class V03Tests: XCTestCase {
     func testPromptRules() {
         let p = AssistantTools.systemPrompt(data: t.data, now: now, calendar: cal, replyLanguage: "Russian")
         XCTAssertTrue(p.contains("За какую дату?"))
-        XCTAssertTrue(p.contains("never create a category unless the user explicitly asks"))
+        XCTAssertTrue(p.contains("Do not create categories on your own initiative"))
+        XCTAssertTrue(p.contains("yesterday = 2026-11-19"))
+        XCTAssertTrue(p.contains("→ 2026-11-03"))
         let names = AssistantTools.all.compactMap { $0["function"]?["name"]?.text }
         XCTAssertTrue(Set(names).isSuperset(of: ["add_transactions", "revise_draft", "confirm_pending", "cancel_pending", "undo_last_action", "create_category"]))
     }
@@ -191,5 +193,8 @@ final class V03Tests: XCTestCase {
         XCTAssertFalse(s.autoSendVoice)
         XCTAssertTrue(s.speakReplies)
         XCTAssertTrue(s.handsFree)
+        XCTAssertEqual(s.model, "gpt-4.1", "the old default model is upgraded")
+        let chosen = try JSONDecoder().decode(AISettings.self, from: Data(#"{"model":"gpt-4.1-mini","speakReplies":false}"#.utf8))
+        XCTAssertEqual(chosen.model, "gpt-4.1-mini", "a model chosen in 0.3 settings is kept")
     }
 }

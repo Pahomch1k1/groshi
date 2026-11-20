@@ -1,27 +1,47 @@
 name: Live OpenAI test
 
-# Manual only: calls the real OpenAI API (costs a few cents).
+# Manual only: calls the real OpenAI API (about $0.30 per run with gpt-4.1).
+# Needs the repository secret OPENAI_API_KEY. The same check can be run locally:
+#   node scripts/ai-live/harness.mjs ai-contract.json recordings.json gpt-4.1
 on:
   workflow_dispatch:
     inputs:
       model:
         description: "OpenAI model"
-        default: "gpt-4.1-mini"
+        default: "gpt-4.1"
 
 jobs:
-  live:
+  contract:
     runs-on: ubuntu-latest
     container: swift:6.0-jammy
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Real assistant scenarios
+      - name: Export tools and system prompt
         working-directory: Core
         env:
+          AI_CONTRACT_OUT: ${{ github.workspace }}/ai-contract.json
+        run: swift test --filter AIContractTests 2>&1 | tail -n 20
+        shell: bash -o pipefail {0}
+      - uses: actions/upload-artifact@v4
+        with: { name: ai-contract, path: ai-contract.json }
+
+  live:
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: ai-contract }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Real assistant scenarios
+        env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ inputs.model }}
-        shell: bash
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then echo "::error::Secret OPENAI_API_KEY is not set"; exit 1; fi
-          swift test --filter LiveOpenAITests 2>&1 | grep -v "^\[" | tail -n 200
-          exit ${PIPESTATUS[0]}
+          node scripts/ai-live/harness.mjs ai-contract.json recordings.json "${{ inputs.model }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: live-recordings, path: recordings.json, if-no-files-found: ignore }

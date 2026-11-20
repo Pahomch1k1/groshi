@@ -35,99 +35,99 @@ struct CategoryEditor: View {
                 HStack {
                     CircleButton(systemImage: "xmark") { dismiss() }
                     Spacer()
-                    Text(category == nil ? L("Новая категория") : L("Категория")).font(.system(size: 19, weight: .semibold))
+                    Text(category == nil ? L("Новая категория") : L("Категория")).font(.system(size: 16, weight: .semibold))
                     Spacer()
                     CircleButton(systemImage: "checkmark") { save() }
                         .opacity(name.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1)
                         .accessibilityIdentifier("category-save")
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         preview
                             .frame(maxWidth: .infinity)
-                            .padding(.top, 18)
+                            .padding(.top, 10)
 
                         HStack {
-                            Text(L("Название")).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
+                            Text(L("Название")).font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
                             TextField(L("Название категории"), text: $name)
-                                .font(.system(size: 18))
+                                .font(.system(size: 15))
                                 .multilineTextAlignment(.trailing)
                                 .focused($nameFocused)
                                 .accessibilityIdentifier("category-name")
                         }
-                        .padding(.horizontal, 22).frame(height: 64)
+                        .padding(.horizontal, 16).frame(height: 46)
                         .background(Palette.card, in: Capsule())
-                        .shadow(color: Palette.shadow, radius: 10, y: 3)
-                        .padding(.top, 26)
+                        .shadow(color: Palette.shadow, radius: 7, y: 2)
+                        .padding(.top, 18)
 
                         if category.map({ c in store.data.transactions.contains { $0.categoryID == c.id } }) != true {
                             KindSegment(kind: $kind, haptics: store.data.settings.haptics)
-                                .padding(.top, 14)
+                                .padding(.top, 10)
                         }
 
-                        Text(L("Цвет категории")).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
-                            .padding(.top, 22)
+                        Text(L("Цвет категории")).font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
+                            .padding(.top, 16)
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
+                            HStack(spacing: 8) {
                                 ForEach(Self.colors, id: \.self) { c in
                                     ZStack {
                                         Circle().fill(color == c ? Color(hex: c) : Palette.card)
                                             .shadow(color: Palette.shadow, radius: 4, y: 2)
-                                        if color != c { Circle().fill(Color(hex: c)).frame(width: 16, height: 16) }
+                                        if color != c { Circle().fill(Color(hex: c)).frame(width: 12, height: 12) }
                                     }
-                                    .frame(width: 54, height: 54)
+                                    .frame(width: 40, height: 40)
                                     .onTapGesture { Haptics.select(); withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { color = c } }
                                 }
                                 ColorPicker("", selection: Binding(get: { Color(hex: color) }, set: { color = $0.hexString }), supportsOpacity: false)
-                                    .labelsHidden().frame(width: 54, height: 54)
+                                    .labelsHidden().frame(width: 40, height: 40)
                             }
-                            .padding(.vertical, 8).padding(.horizontal, 2)
+                            .padding(.vertical, 6).padding(.horizontal, 2)
                         }
-                        .padding(.top, 6)
+                        .padding(.top, 4)
 
                         HStack {
-                            Text(L("Иконка категории")).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
+                            Text(L("Иконка категории")).font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
                             Spacer()
                             Button { showEmoji = true } label: { Chip(text: "😀 " + L("Эмодзи")) }.buttonStyle(.plain)
                             PhotosPicker(selection: $photo, matching: .images) { Chip(text: L("Своя"), systemImage: "photo") }
                         }
-                        .padding(.top, 18)
+                        .padding(.top, 12)
 
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5), spacing: 12) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
                             ForEach(IconLibrary.all, id: \.self) { s in
                                 let on = icon == .symbol(s)
                                 Image(systemName: s)
-                                    .font(.system(size: 24, weight: .medium))
+                                    .font(.system(size: 18, weight: .medium))
                                     .foregroundStyle(on ? Color(hex: color) : Color(hex: "#9AA7B4"))
-                                    .frame(width: 62, height: 62)
+                                    .frame(width: 46, height: 46)
                                     .background(on ? Palette.pastel(color, 0.22) : Palette.card, in: Circle())
                                     .overlay(Circle().strokeBorder(on ? Color(hex: color) : .clear, lineWidth: 2))
                                     .scaleEffect(on ? 1.06 : 1)
                                     .onTapGesture { Haptics.select(); withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) { icon = .symbol(s) } }
                             }
                         }
-                        .padding(.top, 12)
+                        .padding(.top, 8)
 
                         if let c = category {
                             Button(role: .destructive) { confirmDelete = true } label: {
-                                Text(L("Удалить категорию")).font(.system(size: 17, weight: .medium))
-                                    .frame(maxWidth: .infinity).frame(height: 54)
+                                Text(L("Удалить категорию")).font(.system(size: 15, weight: .medium))
+                                    .frame(maxWidth: .infinity).frame(height: 46)
                                     .background(Palette.card, in: Capsule())
                             }
-                            .padding(.top, 24)
+                            .padding(.top, 18)
                             .sheet(isPresented: $confirmDelete) { DeleteCategorySheet(category: c).presentationDetents([.medium]) }
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 40)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 30)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
         }
-        .presentationCornerRadius(38)
+        .presentationCornerRadius(30)
         .onAppear {
             if let c = category {
                 name = c.name; color = c.colorHex; icon = c.icon
@@ -158,10 +158,10 @@ struct CategoryEditor: View {
     var preview: some View {
         ZStack {
             Circle().fill(LinearGradient(colors: [Color(hex: color).opacity(0.35), Color(hex: color).opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
-            CategoryIconView(icon: icon, colorHex: color, size: 104)
+            CategoryIconView(icon: icon, colorHex: color, size: 76)
                 .opacity(icon == .symbol("tag.fill") && category == nil ? 0.0 : 1)
         }
-        .frame(width: 104, height: 104)
+        .frame(width: 76, height: 76)
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: icon)
         .animation(.easeInOut(duration: 0.25), value: color)
     }

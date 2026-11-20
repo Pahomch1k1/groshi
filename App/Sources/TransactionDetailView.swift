@@ -27,7 +27,7 @@ struct TransactionDetailView: View {
             }
         }
         .presentationDetents([.large])
-        .presentationCornerRadius(38)
+        .presentationCornerRadius(30)
         .presentationBackground(.clear)
         .presentationDragIndicator(.visible)
     }
@@ -46,45 +46,47 @@ struct TransactionDetailView: View {
                         CircleButton(systemImage: "xmark") { dismiss() }
                         Spacer()
                         Button { editing = true } label: {
-                            Text(L("Изменить")).font(.system(size: 17, weight: .medium)).foregroundStyle(Color.primary)
-                                .padding(.horizontal, 18).frame(height: 46)
+                            Text(L("Изменить")).font(.system(size: 15, weight: .medium)).foregroundStyle(Color.primary)
+                                .padding(.horizontal, 14).frame(height: 36)
                                 .background(Palette.card.opacity(0.92), in: Capsule())
-                                .shadow(color: Palette.shadow, radius: 8, y: 3)
+                                .shadow(color: Palette.shadow, radius: 6, y: 2)
+                                .frame(height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(PressableStyle(scale: 0.93))
                         .accessibilityIdentifier("detail-edit")
                         CircleButton(systemImage: "trash") { confirmDelete = true }
                             .accessibilityIdentifier("detail-delete")
                     }
-                    .padding(.top, 18)
+                    .padding(.top, 12)
 
-                    VStack(spacing: 8) {
-                        if tx.isTransfer { TransferIcon(size: 84).background(Palette.card, in: Circle()) }
-                        else { CategoryIconView(category: cat, size: 84, style: .white) }
-                        Text(tx.isTransfer ? L("Перевод") : (cat?.name ?? "—")).font(.system(size: 17))
+                    VStack(spacing: 6) {
+                        if tx.isTransfer { TransferIcon(size: 60).background(Palette.card, in: Circle()) }
+                        else { CategoryIconView(category: cat, size: 60, style: .white) }
+                        Text(tx.isTransfer ? L("Перевод") : (cat?.name ?? "—")).font(.system(size: 15))
                         Text(tx.isTransfer ? Fmt.trailingCode(tx.amountMinor, tx.currency) : Fmt.trailingCode(tx.signedMinor, tx.currency, sign: tx.kind == .income))
-                            .font(.system(size: 40, weight: .bold).monospacedDigit())
+                            .font(.system(size: 30, weight: .bold).monospacedDigit())
                             .lineLimit(1).minimumScaleFactor(0.6)
                             .strikethrough(tx.isExcluded)
                         if tx.currency != data.settings.baseCurrency,
                            let c = data.settings.converter.convert(tx.amountMinor, from: tx.currency, to: data.settings.baseCurrency) {
-                            Text("≈ " + Fmt.trailingCode(c, data.settings.baseCurrency)).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
+                            Text("≈ " + Fmt.trailingCode(c, data.settings.baseCurrency)).font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
                         }
                     }
                     .padding(.top, 4)
 
                     paramsCard(tx)
-                        .padding(.top, 22)
+                        .padding(.top, 14)
                     noteCard(tx)
-                        .padding(.top, 16)
+                        .padding(.top, 12)
                     if tx.source != .manual {
                         Text(tx.source == .ai ? L("Добавлено AI-ассистентом") : L("Импортировано"))
-                            .font(.system(size: 13)).foregroundStyle(Palette.textTertiary)
-                            .padding(.top, 14)
+                            .font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
+                            .padding(.top, 10)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 40)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 30)
             }
             .scrollDismissesKeyboard(.interactively)
         }
@@ -125,11 +127,11 @@ struct TransactionDetailView: View {
             if tx.isTransfer {
                 divider
                 row(L("Куда")) {
-                    Text(tx.toWalletID.flatMap { data.wallet($0)?.name } ?? "—").font(.system(size: 17, weight: .semibold))
+                    Text(tx.toWalletID.flatMap { data.wallet($0)?.name } ?? "—").font(.system(size: 15, weight: .semibold))
                 }
                 if tx.creditedCurrency != tx.currency {
                     divider
-                    row(L("Зачислено")) { Text(Fmt.trailingCode(tx.creditedMinor, tx.creditedCurrency)).font(.system(size: 17, weight: .semibold)) }
+                    row(L("Зачислено")) { Text(Fmt.trailingCode(tx.creditedMinor, tx.creditedCurrency)).font(.system(size: 15, weight: .semibold)) }
                 }
             }
             divider
@@ -149,7 +151,7 @@ struct TransactionDetailView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.triangle.2.circlepath.circle.fill").foregroundStyle(Palette.textSecondary)
                             Text(rule.map { AddTransactionView.frequencyName($0.frequency) } ?? L("Сделать повторяющейся"))
-                                .font(.system(size: 17, weight: .semibold)).foregroundStyle(rule == nil ? Palette.textSecondary : Color.primary)
+                                .font(.system(size: 15, weight: .semibold)).foregroundStyle(rule == nil ? Palette.textSecondary : Color.primary)
                             Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textSecondary)
                         }
                     }
@@ -166,22 +168,22 @@ struct TransactionDetailView: View {
             }
         }
         .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .background(Palette.card.opacity(0.35), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Palette.card.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
     }
 
     func noteCard(_ tx: Txn) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             TextField(L("Опишите операцию"), text: $note, axis: .vertical)
-                .font(.system(size: 18))
+                .font(.system(size: 15))
                 .lineLimit(2...6)
                 .focused($noteFocused)
                 .accessibilityIdentifier("detail-note")
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    Image(systemName: "tag.fill").font(.system(size: 15))
-                        .frame(width: 38, height: 38).background(Palette.bubble.opacity(0.85), in: Circle())
+                HStack(spacing: 6) {
+                    Image(systemName: "tag.fill").font(.system(size: 12))
+                        .frame(width: 30, height: 30).background(Palette.bubble.opacity(0.85), in: Circle())
                     let all = store.data.sortedLabels.map { $0.name }
                     ForEach(tx.tags.filter { !all.contains($0) } + all, id: \.self) { name in
                         Chip(text: name, selected: tx.tags.contains(name))
@@ -195,30 +197,30 @@ struct TransactionDetailView: View {
                 }
             }
         }
-        .padding(18)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .background(Palette.card.opacity(0.35), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Palette.card.opacity(0.35), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
     }
 
     // MARK: Helpers
 
-    var divider: some View { Divider().padding(.leading, 20).opacity(0.5) }
+    var divider: some View { Divider().padding(.leading, 16).opacity(0.5) }
 
     func row<V: View>(_ title: String, @ViewBuilder value: () -> V) -> some View {
         HStack {
-            Text(title).font(.system(size: 17)).foregroundStyle(Palette.textSecondary)
+            Text(title).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
             Spacer(minLength: 12)
             value()
         }
-        .padding(.horizontal, 20)
-        .frame(minHeight: 58)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
     }
 
     func valueLabel(_ text: String, icon: String?) -> some View {
         HStack(spacing: 6) {
             if let icon { Image(systemName: icon).foregroundStyle(Palette.expense.opacity(0.8)) }
-            Text(text).font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary)
+            Text(text).font(.system(size: 15, weight: .semibold)).foregroundStyle(Color.primary)
             Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.textSecondary)
         }
     }

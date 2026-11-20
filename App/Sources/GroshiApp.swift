@@ -61,17 +61,17 @@ struct RootView: View {
                 }
                 .accessibilityIdentifier("add-button")
                 .padding(.trailing, 18)
-                .padding(.bottom, 92)
+                .padding(.bottom, 72)
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
         .overlay(alignment: .bottom) {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 if let t = store.toast {
                     ToastView(toast: t).transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 SpendTabBar(selection: $store.selectedTab, haptics: store.data.settings.haptics)
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, 20)
             }
             .padding(.bottom, 2)
         }
@@ -104,8 +104,9 @@ struct RootView: View {
 }
 
 /// Bottom padding so scroll content clears the floating tab bar and "+".
+/// Tab bar 56 + its 2 pt bottom padding + ~22 pt breathing room.
 extension View {
     func tabBarSafeArea() -> some View {
-        safeAreaInset(edge: .bottom) { Color.clear.frame(height: 96) }
+        safeAreaInset(edge: .bottom) { Color.clear.frame(height: 80) }
     }
 }

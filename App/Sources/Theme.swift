@@ -52,9 +52,9 @@ enum Palette {
 
 extension View {
     /// White rounded card with Spendee's soft shadow.
-    func spendCard(radius: CGFloat = 28) -> some View {
+    func spendCard(radius: CGFloat = 20) -> some View {
         background(Palette.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .shadow(color: Palette.shadow, radius: 14, y: 4)
+            .shadow(color: Palette.shadow, radius: 10, y: 3)
     }
 }
 

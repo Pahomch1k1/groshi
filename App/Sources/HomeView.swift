@@ -26,9 +26,9 @@ struct HomeView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     header
-                        .padding(.top, 8)
+                        .padding(.top, 6)
                     CashFlowSummary(totals: totals, base: base, caption: L("Денежный поток") + " · " + pagerTitle(cal))
-                        .padding(.top, 22)
+                        .padding(.top, 16)
                     if store.period.canStep {
                         GroupedBarsChart(groups: barGroups(cal: cal, filter: f), currency: base) { g in
                             Haptics.select(enabled: data.settings.haptics)
@@ -36,24 +36,24 @@ struct HomeView: View {
                                 store.period = Period.containing(g.id, kind: store.period.kind, calendar: cal)
                             }
                         }
-                        .frame(height: 168)
-                        .padding(.top, 18)
+                        .frame(height: 116)
+                        .padding(.top, 12)
                     }
                     PeriodPager()
                         .padding(.horizontal, -16)
-                        .padding(.top, 10)
+                        .padding(.top, 6)
 
                     if !upcoming.isEmpty {
                         ScheduledCard(items: upcoming) { showScheduled = true }
-                            .padding(.top, 14)
+                            .padding(.top, 10)
                     }
 
                     if groups.isEmpty {
-                        EmptyStateView(filtered: f.isActive).padding(.top, 30)
+                        EmptyStateView(filtered: f.isActive).padding(.top, 20)
                     }
                     ForEach(groups) { g in
                         DayGroupView(group: g, onTap: { selected = $0 }, onEdit: { editing = $0 })
-                            .padding(.top, 18)
+                            .padding(.top, 12)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -72,11 +72,11 @@ struct HomeView: View {
     }
 
     var header: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").font(.system(size: 18, weight: .medium)).foregroundStyle(Palette.textSecondary)
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.textSecondary)
                 TextField(L("Поиск"), text: $search)
-                    .font(.system(size: 18))
+                    .font(.system(size: 15))
                     .focused($searchFocused)
                     .submitLabel(.search)
                     .accessibilityIdentifier("search-field")
@@ -86,21 +86,23 @@ struct HomeView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .frame(height: 50)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
             .background(Palette.card, in: Capsule())
-            .shadow(color: Palette.shadow, radius: 10, y: 3)
+            .shadow(color: Palette.shadow, radius: 7, y: 2)
 
             Button { showFilter = true } label: {
                 Image(systemName: "line.3.horizontal.decrease")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(filter.isActive ? Palette.accent : Color.primary)
-                    .frame(width: 50, height: 50)
+                    .frame(width: 40, height: 40)
                     .background(Palette.card, in: Circle())
-                    .shadow(color: Palette.shadow, radius: 10, y: 3)
+                    .shadow(color: Palette.shadow, radius: 7, y: 2)
                     .overlay(alignment: .topTrailing) {
-                        if filter.isActive { Circle().fill(Palette.expense).frame(width: 9, height: 9).offset(x: -6, y: 6) }
+                        if filter.isActive { Circle().fill(Palette.expense).frame(width: 7, height: 7).offset(x: -5, y: 5) }
                     }
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(scale: 0.9))
             .accessibilityIdentifier("filter-button")
@@ -165,7 +167,7 @@ struct CashFlowSummary: View {
                 Spacer(minLength: 8)
                 pills
             }
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 amountBlock
                 pills
             }
@@ -173,22 +175,22 @@ struct CashFlowSummary: View {
     }
 
     var amountBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(Fmt.code(totals.net, base))
-                .font(.system(size: 34, weight: .bold).monospacedDigit())
+                .font(.system(size: 24, weight: .bold).monospacedDigit())
                 .contentTransition(.numericText(value: Double(totals.net)))
                 .lineLimit(1).minimumScaleFactor(0.7)
                 .accessibilityIdentifier("cashflow-net")
-            Text(caption).font(.system(size: 16)).foregroundStyle(Palette.textSecondary)
+            Text(caption).font(.system(size: 13)).foregroundStyle(Palette.textSecondary)
         }
     }
 
     var pills: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             AmountPill(sign: "plus", minor: totals.income, base: base, color: Palette.income).accessibilityIdentifier("cashflow-income")
             AmountPill(sign: "minus", minor: totals.expense, base: base, color: Palette.expense).accessibilityIdentifier("cashflow-expense")
         }
-        .padding(.top, 8)
+        .padding(.top, 5)
     }
 }
 
@@ -198,10 +200,10 @@ struct AmountPill: View {
     var base: String
     var color: Color
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: sign + ".circle.fill").font(.system(size: 17)).foregroundStyle(color)
+        HStack(spacing: 4) {
+            Image(systemName: sign + ".circle.fill").font(.system(size: 14)).foregroundStyle(color)
             Text(Fmt.code(minor, base))
-                .font(.system(size: 16).monospacedDigit())
+                .font(.system(size: 13).monospacedDigit())
                 .foregroundStyle(color)
                 .contentTransition(.numericText(value: Double(minor)))
                 .lineLimit(1)
@@ -218,17 +220,17 @@ struct ScheduledCard: View {
         let base = store.data.settings.baseCurrency
         let total = store.data.settings.converter.sum(items.map { (minor: $0.rule.template.signedMinor, currency: $0.rule.template.currency) }, into: base).total
         Button(action: onTap) {
-            HStack(spacing: 16) {
-                Image(systemName: "clock.arrow.circlepath").font(.system(size: 26)).foregroundStyle(Palette.textSecondary)
-                    .frame(width: 46)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(L("Запланировано")).font(.system(size: 19, weight: .medium)).foregroundStyle(Color.primary)
-                    Text("\(items.count) " + L("операций")).font(.system(size: 15)).foregroundStyle(Palette.textSecondary)
+            HStack(spacing: 12) {
+                Image(systemName: "clock.arrow.circlepath").font(.system(size: 19)).foregroundStyle(Palette.textSecondary)
+                    .frame(width: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Запланировано")).font(.system(size: 15, weight: .medium)).foregroundStyle(Color.primary)
+                    Text("\(items.count) " + L("операций")).font(.system(size: 12)).foregroundStyle(Palette.textSecondary)
                 }
                 Spacer()
-                Text(Fmt.code(total, base)).font(.system(size: 18).monospacedDigit()).foregroundStyle(Color.primary)
+                Text(Fmt.code(total, base)).font(.system(size: 15).monospacedDigit()).foregroundStyle(Color.primary)
             }
-            .padding(.horizontal, 20).padding(.vertical, 18)
+            .padding(.horizontal, 16).padding(.vertical, 12)
             .spendCard()
         }
         .buttonStyle(PressableStyle(scale: 0.98))
@@ -238,16 +240,16 @@ struct ScheduledCard: View {
 struct EmptyStateView: View {
     var filtered: Bool
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Image(systemName: filtered ? "line.3.horizontal.decrease.circle" : "tray")
-                .font(.system(size: 40)).foregroundStyle(Palette.textTertiary)
+                .font(.system(size: 30)).foregroundStyle(Palette.textTertiary)
             Text(filtered ? L("Ничего не найдено") : L("Пока нет операций за этот период"))
                 .font(.headline)
             Text(L("Нажмите «+», чтобы добавить, или удерживайте «+», чтобы сказать голосом."))
                 .font(.footnote).foregroundStyle(Palette.textSecondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 30)
+        .padding(.vertical, 20)
     }
 }
 
@@ -302,7 +304,7 @@ struct FilterSheet: View {
                 }
                 Section(L("Категории")) {
                     ForEach(store.data.categories(of: filter.kind == .income ? .income : .expense) + (filter.kind == nil ? store.data.categories(of: .income) : [])) { c in
-                        toggleRow(title: c.name, icon: AnyView(CategoryIconView(category: c, size: 28)), on: filter.categoryIDs.contains(c.id)) {
+                        toggleRow(title: c.name, icon: AnyView(CategoryIconView(category: c, size: 24)), on: filter.categoryIDs.contains(c.id)) {
                             if filter.categoryIDs.contains(c.id) { filter.categoryIDs.remove(c.id) } else { filter.categoryIDs.insert(c.id) }
                         }
                     }

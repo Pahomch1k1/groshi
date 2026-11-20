@@ -179,7 +179,8 @@ public enum AppTheme: String, Codable, CaseIterable {
 
 public struct AISettings: Codable, Hashable {
     public var enabled: Bool = true
-    public var model: String = "gpt-4.1-mini"
+    public static let defaultModel = "gpt-4.1"
+    public var model: String = AISettings.defaultModel
     /// Optional proxy endpoint (e.g. a Cloudflare Worker that holds the key). Empty = call OpenAI directly with the Keychain key.
     public var proxyURL: String = ""
     /// BCP-47 locale for speech recognition.
@@ -198,7 +199,9 @@ public struct AISettings: Codable, Hashable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
-        model = try c.decodeIfPresent(String.self, forKey: .model) ?? "gpt-4.1-mini"
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? AISettings.defaultModel
+        // Settings saved before 0.3 still carry the old default; in live tests it asked for dates it had already been given.
+        if !c.contains(.speakReplies), model == "gpt-4.1-mini" { model = AISettings.defaultModel }
         proxyURL = try c.decodeIfPresent(String.self, forKey: .proxyURL) ?? ""
         voiceLocale = try c.decodeIfPresent(String.self, forKey: .voiceLocale) ?? "ru-RU"
         autoSendVoice = try c.decodeIfPresent(Bool.self, forKey: .autoSendVoice) ?? true

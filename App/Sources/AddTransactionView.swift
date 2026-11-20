@@ -47,8 +47,8 @@ struct AddTransactionView: View {
                 headerBlock
                     .padding(.top, 2)
                 descriptionCard
-                    .padding(.horizontal, 20)
-                    .padding(.top, stage == .category ? 22 : 12)
+                    .padding(.horizontal, 16)
+                    .padding(.top, stage == .category ? 14 : 8)
                 if stage == .category {
                     categoryGrid
                         .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .bottom).combined(with: .opacity)))
@@ -60,7 +60,7 @@ struct AddTransactionView: View {
             if showMenu {
                 Color.black.opacity(0.001).ignoresSafeArea().onTapGesture { closeMenu() }
                 categoryMenu
-                    .padding(.top, 70)
+                    .padding(.top, 58)
                     .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
             }
         }
@@ -68,7 +68,7 @@ struct AddTransactionView: View {
         .animation(.easeInOut(duration: 0.35), value: categoryID)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showMenu)
         .presentationDetents([.large])
-        .presentationCornerRadius(38)
+        .presentationCornerRadius(30)
         .presentationBackground(.clear)
         .onAppear(perform: load)
         .sheet(isPresented: $showNewCategory) {
@@ -112,32 +112,34 @@ struct AddTransactionView: View {
                 Button {
                     withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { stage = .category }
                 } label: {
-                    Image(systemName: "square.grid.2x2").font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary)
-                        .frame(width: 46, height: 46).background(Palette.card.opacity(0.92), in: Circle())
+                    Image(systemName: "square.grid.2x2").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.primary)
+                        .frame(width: 36, height: 36).background(Palette.card.opacity(0.92), in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(PressableStyle(scale: 0.9))
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
     }
 
     var headerBlock: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Button {
                 guard stage == .amount else { return }
                 menuKind = kind == .income ? .income : .expense
                 Haptics.tap(enabled: haptics)
                 showMenu.toggle()
             } label: {
-                VStack(spacing: 6) {
+                VStack(spacing: 4) {
                     Group {
                         if stage == .category {
-                            CategoryPlaceholderIcon(size: 76)
+                            CategoryPlaceholderIcon(size: 54)
                         } else if kind == .transfer {
-                            TransferIcon(size: 72).background(Palette.card, in: Circle())
+                            TransferIcon(size: 52).background(Palette.card, in: Circle())
                         } else {
-                            CategoryIconView(category: category, size: 72, style: .white)
+                            CategoryIconView(category: category, size: 52, style: .white)
                         }
                     }
                     .transition(.scale.combined(with: .opacity))
@@ -146,7 +148,7 @@ struct AddTransactionView: View {
                             Text(kind == .transfer ? L("Перевод") : (category?.name ?? ""))
                             Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold))
                         }
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(Color.primary)
                     }
                 }
@@ -156,20 +158,20 @@ struct AddTransactionView: View {
 
             VStack(spacing: 2) {
                 if Calculator.hasOperator(expr) {
-                    Text(expr).font(.system(size: 18, weight: .medium).monospacedDigit()).foregroundStyle(Palette.textSecondary)
+                    Text(expr).font(.system(size: 15, weight: .medium).monospacedDigit()).foregroundStyle(Palette.textSecondary)
                         .transition(.opacity)
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(amountText)
-                        .font(.system(size: 48, weight: .bold).monospacedDigit())
+                        .font(.system(size: 36, weight: .bold).monospacedDigit())
                         .contentTransition(.numericText())
                         .accessibilityIdentifier("amount-display")
                     Menu {
                         ForEach(Currencies.common, id: \.self) { c in Button(c + "  " + Currencies.symbol(c)) { currency = c } }
                     } label: {
                         HStack(spacing: 2) {
-                            Text(currency).font(.system(size: 34, weight: .bold))
-                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.textSecondary)
+                            Text(currency).font(.system(size: 26, weight: .bold))
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.textSecondary)
                         }
                         .foregroundStyle(Color.primary)
                     }
@@ -194,17 +196,17 @@ struct AddTransactionView: View {
     // MARK: Description & labels
 
     var descriptionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             TextField(L("Опишите операцию"), text: $note, axis: .vertical)
-                .font(.system(size: 18))
+                .font(.system(size: 15))
                 .lineLimit(1...3)
                 .focused($noteFocused)
                 .accessibilityIdentifier("note-field")
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Button { showNewLabel = true } label: {
-                        Image(systemName: "tag.fill").font(.system(size: 15)).foregroundStyle(Color.primary)
-                            .frame(width: 38, height: 38).background(Palette.bubble.opacity(0.85), in: Circle())
+                        Image(systemName: "tag.fill").font(.system(size: 12)).foregroundStyle(Color.primary)
+                            .frame(width: 30, height: 30).background(Palette.bubble.opacity(0.85), in: Circle())
                     }
                     .accessibilityIdentifier("add-label")
                     ForEach(labelOrder, id: \.self) { name in
@@ -214,9 +216,9 @@ struct AddTransactionView: View {
                 }
             }
         }
-        .padding(18)
-        .background(Palette.card.opacity(stage == .category ? 0.75 : 0.6), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color.white.opacity(0.5), lineWidth: 0.6))
+        .padding(12)
+        .background(Palette.card.opacity(stage == .category ? 0.75 : 0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.5), lineWidth: 0.6))
     }
 
     /// Selected labels first, then the rest in their saved order.
@@ -234,36 +236,36 @@ struct AddTransactionView: View {
     var categoryGrid: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(L("Выберите категорию"))
-                .font(.system(size: 20, weight: .semibold))
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
+                .font(.system(size: 17, weight: .semibold))
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
             ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 14) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 10) {
                     ForEach(store.data.categories(of: kind == .income ? .income : .expense)) { c in
                         Button { pick(c) } label: {
-                            VStack(spacing: 7) {
-                                CategoryIconView(category: c, size: 72, style: .white)
-                                Text(c.name).font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
-                                    .lineLimit(1).minimumScaleFactor(0.75)
+                            VStack(spacing: 5) {
+                                CategoryIconView(category: c, size: 52, style: .white)
+                                Text(c.name).font(.system(size: 12)).foregroundStyle(Palette.textSecondary)
+                                    .lineLimit(1).minimumScaleFactor(0.92)
                             }
                         }
                         .buttonStyle(PressableStyle(scale: 0.9))
                         .accessibilityIdentifier("category-\(c.name)")
                     }
                     Button { showNewCategory = true } label: {
-                        VStack(spacing: 7) {
-                            Image(systemName: "plus").font(.system(size: 28, weight: .regular)).foregroundStyle(Palette.accent)
-                                .frame(width: 72, height: 72).background(Palette.accent.opacity(0.16), in: Circle())
-                            Text(L("Создать категорию")).font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
-                                .lineLimit(1).minimumScaleFactor(0.7)
+                        VStack(spacing: 5) {
+                            Image(systemName: "plus").font(.system(size: 21, weight: .regular)).foregroundStyle(Palette.accent)
+                                .frame(width: 52, height: 52).background(Palette.accent.opacity(0.16), in: Circle())
+                            Text(L("Создать категорию")).font(.system(size: 12)).foregroundStyle(Palette.textSecondary)
+                                .lineLimit(1).minimumScaleFactor(0.92)
                         }
                     }
                     .buttonStyle(PressableStyle(scale: 0.9))
                     .accessibilityIdentifier("create-category")
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 110)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 84)
             }
             .scrollIndicators(.hidden)
             .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.82), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
@@ -273,10 +275,10 @@ struct AddTransactionView: View {
 
     /// [voice] [Expenses | Income] [Transfer]
     var kindBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             AssistantToolbarButton(context: nil, startVoice: true, label: AnyView(
-                Image(systemName: "mic.fill").font(.system(size: 20, weight: .semibold)).foregroundStyle(Palette.accent)
-                    .frame(width: 58, height: 58).background(Palette.card, in: Circle()).shadow(color: Palette.shadow, radius: 8, y: 3)
+                Image(systemName: "mic.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.accent)
+                    .frame(width: 46, height: 46).background(Palette.card, in: Circle()).shadow(color: Palette.shadow, radius: 6, y: 2)
             ))
             .accessibilityIdentifier("add-voice")
             KindSegment(kind: $kind, haptics: haptics)
@@ -284,9 +286,9 @@ struct AddTransactionView: View {
                 Haptics.select(enabled: haptics)
                 startTransfer()
             } label: {
-                Text(L("Перевод")).font(.system(size: 17, weight: .semibold)).foregroundStyle(Color.primary)
-                    .padding(.horizontal, 18).frame(height: 58)
-                    .background(Palette.card, in: Capsule()).shadow(color: Palette.shadow, radius: 8, y: 3)
+                Text(L("Перевод")).font(.system(size: 15, weight: .semibold)).foregroundStyle(Color.primary)
+                    .padding(.horizontal, 14).frame(height: 46)
+                    .background(Palette.card, in: Capsule()).shadow(color: Palette.shadow, radius: 6, y: 2)
             }
             .buttonStyle(PressableStyle(scale: 0.94))
             .accessibilityIdentifier("kind-transfer")
@@ -297,9 +299,9 @@ struct AddTransactionView: View {
     // MARK: Stage 2 — calculator
 
     var amountStage: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 10) {
             chipsRow
-                .padding(.top, 10)
+                .padding(.top, 6)
             Spacer(minLength: 0)
             if !noteFocused && !creditFocused {
                 keypad
@@ -308,15 +310,15 @@ struct AddTransactionView: View {
             }
             Button(action: save) {
                 Text(editing == nil ? L("Добавить операцию") : L("Сохранить"))
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).frame(height: 60)
+                    .frame(maxWidth: .infinity).frame(height: 48)
                     .background(canSave ? Palette.accent : Palette.accent.opacity(0.45), in: Capsule())
-                    .shadow(color: Palette.accent.opacity(canSave ? 0.35 : 0), radius: 12, y: 5)
+                    .shadow(color: Palette.accent.opacity(canSave ? 0.35 : 0), radius: 9, y: 4)
             }
             .buttonStyle(PressableStyle(scale: 0.97))
             .padding(.horizontal, 16)
-            .padding(.bottom, 10)
+            .padding(.bottom, 8)
             .accessibilityIdentifier("save-button")
         }
         .animation(.snappy, value: noteFocused || creditFocused)
@@ -330,7 +332,7 @@ struct AddTransactionView: View {
 
     var chipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Button { showDate = true } label: { Chip(text: dateLabel, systemImage: "calendar") }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("chip-date")
@@ -340,13 +342,13 @@ struct AddTransactionView: View {
                     walletMenu(selection: $toWalletID, prefix: L("Куда"), id: "chip-to-wallet", excluding: walletID)
                     if let to = toWalletID.flatMap({ store.data.wallet($0) }), to.currency != currency {
                         HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.to.line").font(.system(size: 13, weight: .semibold))
+                            Image(systemName: "arrow.down.to.line").font(.system(size: 11, weight: .semibold))
                             TextField(creditPlaceholder(to), text: $toAmountText)
-                                .keyboardType(.decimalPad).focused($creditFocused).frame(width: 90)
+                                .keyboardType(.decimalPad).focused($creditFocused).frame(width: 80)
                             Text(to.currency)
                         }
-                        .font(.system(size: 15, weight: .medium))
-                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .font(.system(size: 13, weight: .medium))
+                        .padding(.horizontal, 11).padding(.vertical, 6)
                         .background(Palette.bubble.opacity(0.85), in: Capsule())
                     }
                 } else {
@@ -359,7 +361,7 @@ struct AddTransactionView: View {
                     .accessibilityIdentifier("chip-repeat")
                 }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 16)
         }
     }
 
@@ -402,9 +404,9 @@ struct AddTransactionView: View {
 
     var keypad: some View {
         let rows: [[String]] = [["1", "2", "3", "÷"], ["4", "5", "6", "×"], ["7", "8", "9", "−"], [",", "0", "⌫", "+"]]
-        return VStack(spacing: 10) {
+        return VStack(spacing: 8) {
             ForEach(rows, id: \.self) { row in
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     ForEach(row, id: \.self) { k in
                         Button {
                             Haptics.tap(enabled: haptics)
@@ -413,11 +415,11 @@ struct AddTransactionView: View {
                             Group {
                                 if k == "⌫" { Image(systemName: "delete.left.fill") } else { Text(k) }
                             }
-                            .font(.system(size: 26, weight: .semibold))
+                            .font(.system(size: 21, weight: .semibold))
                             .foregroundStyle(Color.primary)
-                            .frame(maxWidth: .infinity).frame(height: 54)
+                            .frame(maxWidth: .infinity).frame(height: 46)
                             .background(Palette.card.opacity(0.9), in: Capsule())
-                            .shadow(color: Palette.shadow, radius: 4, y: 2)
+                            .shadow(color: Palette.shadow, radius: 3, y: 1)
                         }
                         .buttonStyle(PressableStyle(scale: 0.92))
                         .accessibilityIdentifier("key-\(k)")
@@ -438,37 +440,38 @@ struct AddTransactionView: View {
                 menuRow(title: other == .income ? L("Доходы") : L("Расходы"), icon: nil, checked: false, chevron: true) {
                     withAnimation(.snappy) { menuKind = other }
                 }
-                Divider().padding(.vertical, 6).padding(.horizontal, 16)
+                Divider().padding(.vertical, 4).padding(.horizontal, 14)
                 Text(menuKind == .expense ? L("Расходы") : L("Доходы"))
-                    .font(.system(size: 14)).foregroundStyle(Palette.textSecondary)
-                    .padding(.horizontal, 28).padding(.vertical, 6)
+                    .font(.system(size: 12)).foregroundStyle(Palette.textSecondary)
+                    .padding(.horizontal, 22).padding(.vertical, 4)
                 ForEach(list) { c in
                     menuRow(title: c.name, icon: c, checked: kind != .transfer && categoryID == c.id) { pick(c); closeMenu() }
                 }
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
         }
-        .frame(width: 300, height: min(470, CGFloat(list.count) * 46 + 150))
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .background(Palette.card.opacity(0.45), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
-        .shadow(color: .black.opacity(0.14), radius: 24, y: 10)
+        .frame(width: 250, height: min(430, CGFloat(list.count) * 40 + 130))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Palette.card.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Color.white.opacity(0.6), lineWidth: 0.6))
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 8)
         .accessibilityIdentifier("category-menu")
     }
 
     func menuRow(title: String, icon: FinCategory?, checked: Bool, chevron: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: { Haptics.select(enabled: haptics); action() }) {
-            HStack(spacing: 12) {
-                Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold)).opacity(checked ? 1 : 0).frame(width: 16)
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold)).opacity(checked ? 1 : 0).frame(width: 14)
                 if let icon {
-                    CategoryIconView(category: icon, size: 28).frame(width: 28)
+                    CategoryIconView(category: icon, size: 22).frame(width: 22)
                 }
-                Text(title).font(.system(size: 18)).lineLimit(1)
+                Text(title).font(.system(size: 15)).lineLimit(1)
                 Spacer()
-                if chevron { Image(systemName: "chevron.right").font(.system(size: 15, weight: .semibold)) }
+                if chevron { Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)) }
             }
             .foregroundStyle(Color.primary)
-            .padding(.horizontal, 16).padding(.vertical, 9)
+            .frame(minHeight: 22)
+            .padding(.horizontal, 14).padding(.vertical, 9)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -613,11 +616,11 @@ struct KindSegment: View {
             ForEach([TxKind.expense, .income], id: \.self) { k in
                 let on = kind == k || (k == .expense && kind == .transfer)
                 Text(k == .expense ? L("Расходы") : L("Доходы"))
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.primary.opacity(on ? 1 : 0.75))
-                    .frame(maxWidth: .infinity).frame(height: 50)
+                    .frame(maxWidth: .infinity).frame(height: 40)
                     .background {
-                        if on { Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 6, y: 2).matchedGeometryEffect(id: "pill", in: ns) }
+                        if on { Capsule().fill(Palette.card).shadow(color: Palette.shadow, radius: 5, y: 2).matchedGeometryEffect(id: "pill", in: ns) }
                     }
                     .contentShape(Capsule())
                     .onTapGesture {
@@ -628,7 +631,7 @@ struct KindSegment: View {
                     .accessibilityIdentifier(k == .expense ? "kind-expense" : "kind-income")
             }
         }
-        .padding(4)
+        .padding(3)
         .background(Palette.bubble.opacity(0.95), in: Capsule())
     }
 }
