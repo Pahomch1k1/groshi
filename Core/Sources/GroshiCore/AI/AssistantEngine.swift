@@ -173,7 +173,6 @@ public final class AssistantEngine {
         do {
             switch name {
             case "add_transactions": return try addTransactions(a, data, &events)
-            case "revise_draft": return try reviseDraft(a, data, &events)
             case "confirm_pending":
                 guard pending != nil else { return error("nothing is pending") }
                 let summary = try applyPending(&events)
@@ -201,9 +200,21 @@ public final class AssistantEngine {
             case "create_category":
                 guard let n = a["name"]?.text else { return error("name required") }
                 let kind = TxKind(rawValue: a["kind"]?.text ?? "expense") ?? .expense
-                let c = Category(name: n, kind: kind, icon: icon(a["icon"]?.text) ?? .symbol("tag.fill"),
+                if let existing = data.categoryNamed(n, kind: kind), !existing.isArchived {
+                    return error("Category '\(existing.name)' already exists; use it (or move_category to place it)")
+                }
+                var c = Category(name: n, kind: kind, icon: icon(a["icon"]?.text) ?? .symbol("tag.fill"),
                                  colorHex: color(a["color"]?.text) ?? Defaults.palette[data.categories.count % Defaults.palette.count])
+                c.sortOrder = (data.categories.filter { $0.kind == kind }.map { $0.sortOrder }.max() ?? 0) + 1
+                var after = data
+                try Mutation.upsertCategory(c).apply(to: &after)
+                if let target = try placement(a, for: c, in: after) {
+                    let order = CategoryOrder.moving(c.id, to: target, kind: kind, in: after)
+                    return commit(.batch([.upsertCategory(c), .reorderCategories(kind: kind, order: order)]),
+                                  summary: "Created category \(n) at position \(target + 1)", needsConfirmation: nil, &events)
+                }
                 return commit(.upsertCategory(c), summary: "Created category \(n)", needsConfirmation: nil, &events)
+            case "move_category": return try moveCategory(a, data, &events)
             case "update_category":
                 guard let n = a["name"]?.text else { return error("name required") }
                 let kind = a["kind"]?.text.flatMap(TxKind.init(rawValue:))
@@ -452,20 +463,71 @@ public final class AssistantEngine {
         return txs
     }
 
-    /// One new operation is saved at once; several become a draft confirmed with one tap or one "да".
-    /// While a draft is pending, new items are appended to it.
+    /// Operations with all required data are saved at once, however many there are (one undo removes
+    /// the whole command). Only a likely duplicate of something just saved waits for a "да".
     func addTransactions(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
         guard let items = a["items"]?.array, !items.isEmpty else { return error("items required") }
-        let draft = pending.flatMap { $0.isDraft && !$0.transactions.contains { $0.isTransfer } ? $0 : nil }
-        let existing = draft?.transactions ?? []
-        let all = existing + (try parseItems(items, data, numberOffset: existing.count))
-        if all.count == 1, DuplicateCheck.suspects(for: all[0], in: data, calendar: calendar, now: now()).isEmpty {
-            let line = describe(all[0], data)
-            try host.apply(.addTransactions(all), "Added: " + line)
-            events.append(.saved(all))
-            return ["status": "saved", "item": .string(line)]
+        let txs = try parseItems(items, data)
+        let dupes = txs.contains { !DuplicateCheck.suspects(for: $0, in: data, calendar: calendar, now: now()).isEmpty }
+        if dupes { return try setDraft(txs, data, &events) }
+        try host.apply(.addTransactions(txs), txs.count == 1 ? "Added: " + describe(txs[0], data) : "Added \(txs.count)")
+        events.append(.saved(txs))
+        let base = data.settings.baseCurrency
+        let tot = Analytics.totals(txs, data: data)
+        return [
+            "status": "saved",
+            "count": .number(Double(txs.count)),
+            "total_expense": .string(MoneyMath.plainString(tot.expense, currency: base) + " " + base),
+            "total_income": .string(MoneyMath.plainString(tot.income, currency: base) + " " + base),
+            // ids let the model correct a saved operation right away ("пиццу не 450, а 500").
+            "items": .array(txs.map { .string(shortID($0.id) + " " + describe($0, data)) }),
+            "next": "Already saved and shown on screen; reply with one short sentence, do not ask to confirm."
+        ]
+    }
+
+    /// Target index (0-based) from position / row+column / after / before, or nil if none was given.
+    func placement(_ a: JSON, for c: Category, in data: AppData) throws -> Int? {
+        let others = data.categories(of: c.kind).filter { $0.id != c.id }
+        if let r = a["row"]?.int, let col = a["column"]?.int {
+            guard r >= 1, (1...CategoryOrder.columns).contains(col) else { throw ToolError(message: "row ≥ 1, column 1…\(CategoryOrder.columns)") }
+            return CategoryOrder.position(row: r, column: col) - 1
         }
-        return try setDraft(all, data, &events)
+        if let p = a["position"]?.int {
+            guard p >= 1 else { throw ToolError(message: "position starts at 1") }
+            return p - 1
+        }
+        if let n = a["after"]?.text {
+            guard let t = data.categoryNamed(n, kind: c.kind) else { throw ToolError(message: notFoundCategoryText(n, data)) }
+            guard let i = others.firstIndex(where: { $0.id == t.id }) else { return nil }
+            return i + 1
+        }
+        if let n = a["before"]?.text {
+            guard let t = data.categoryNamed(n, kind: c.kind) else { throw ToolError(message: notFoundCategoryText(n, data)) }
+            return others.firstIndex(where: { $0.id == t.id })
+        }
+        return nil
+    }
+
+    func moveCategory(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
+        guard let n = a["name"]?.text else { return error("name required") }
+        let kind = a["kind"]?.text.flatMap(TxKind.init(rawValue:))
+        guard let c = data.categoryNamed(n, kind: kind ?? .expense) ?? data.categoryNamed(n, kind: kind) else { return notFoundCategory(n, data) }
+        let order: [UUID]
+        let what: String
+        if let s = a["swap_with"]?.text {
+            guard let o = data.categoryNamed(s, kind: c.kind) else { return notFoundCategory(s, data) }
+            order = CategoryOrder.swapping(c.id, o.id, kind: c.kind, in: data)
+            what = "Swapped \(c.name) and \(o.name)"
+        } else if let target = try placement(a, for: c, in: data) {
+            order = CategoryOrder.moving(c.id, to: target, kind: c.kind, in: data)
+            what = "Moved \(c.name) to position \((order.firstIndex(of: c.id) ?? target) + 1)"
+        } else {
+            return error("give position, row+column, after, before or swap_with")
+        }
+        let names = order.prefix(12).compactMap { data.category($0)?.name }
+        let r = commit(.reorderCategories(kind: c.kind, order: order), summary: what, needsConfirmation: nil, &events)
+        guard r["status"] == "done" else { return r }
+        return ["status": "done", "summary": .string(what), "first_positions": .array(names.map { .string($0) })]
     }
 
     func numbered(_ txs: [Txn], _ data: AppData) -> [String] {
@@ -483,7 +545,7 @@ public final class AssistantEngine {
         try Mutation.addTransactions(txs).apply(to: &copy)
         let dupIdx = txs.indices.filter { !DuplicateCheck.suspects(for: txs[$0], in: data, calendar: calendar, now: now()).isEmpty }
         var p = PendingAction(mutation: .addTransactions(txs), summary: "Draft: " + numbered(txs, data).joined(separator: "; "),
-                              reason: txs.count == 1 ? .possibleDuplicate : .batch, duplicateIndexes: dupIdx)
+                              reason: .possibleDuplicate, duplicateIndexes: dupIdx)
         if let old = pending {
             if old.isDraft { p.id = old.id } else { events.append(.resolved(id: old.id, confirmed: false)) }
         }
@@ -492,52 +554,15 @@ public final class AssistantEngine {
         let base = data.settings.baseCurrency
         let tot = Analytics.totals(txs, data: data)
         var r: [String: JSON] = [
-            "status": .string(txs.count == 1 ? "possible_duplicate" : "draft"),
+            "status": "possible_duplicate",
             "count": .number(Double(txs.count)),
             "total_expense": .string(MoneyMath.plainString(tot.expense, currency: base) + " " + base),
             "total_income": .string(MoneyMath.plainString(tot.income, currency: base) + " " + base),
             "items": .array(numbered(txs, data).map { .string($0) }),
-            "next": "Ask the user to confirm in one short sentence; the list is shown on screen."
+            "next": "Nothing saved yet: it looks like a repeat of operations just saved. Ask in one short sentence whether to add them anyway."
         ]
         if !dupIdx.isEmpty { r["possible_duplicates_of_saved"] = .array(dupIdx.map { .number(Double($0 + 1)) }) }
         return .object(r)
-    }
-
-    func reviseDraft(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
-        guard let p = pending, p.isDraft else {
-            return error("no draft is pending; to change saved operations use find_transactions and update_transactions")
-        }
-        var txs = p.transactions
-        var removed = Set<Int>()
-        for ch in a["changes"]?.array ?? [] {
-            guard let n = ch["number"]?.int, n >= 1, n <= txs.count else { throw ToolError(message: "bad item number; the draft has \(txs.count) items") }
-            let i = n - 1
-            if ch["remove"]?.bool == true { removed.insert(i); continue }
-            var t = txs[i]
-            if let k = ch["kind"]?.text.flatMap(TxKind.init(rawValue:)) { t.kind = k }
-            if let wn = ch["wallet"]?.text {
-                guard let w = data.walletNamed(wn) else { throw ToolError(message: "wallet '\(wn)' not found") }
-                t.walletID = w.id
-            }
-            if let c = ch["currency"]?.text { t.currency = c.uppercased() }
-            if let am = ch["amount"]?.text {
-                guard let v = MoneyMath.parseMinor(am, currency: t.currency), v != 0 else { throw ToolError(message: "item \(n): bad amount") }
-                t.amountMinor = abs(v)
-            }
-            if let cn = ch["category"]?.text {
-                guard let c = data.categoryNamed(cn, kind: t.kind) else { throw ToolError(message: "item \(n): " + notFoundCategoryText(cn, data)) }
-                t.categoryID = c.id
-            } else if data.category(t.categoryID)?.kind != t.kind {
-                throw ToolError(message: "item \(n): the type changed, also give a \(t.kind.rawValue) category")
-            }
-            if let d = ch["date"]?.text { t.date = try txDate(d, ch["time"]?.text) }
-            if let note = ch["note"]?.string { t.note = note }
-            if let ls = ch["labels"]?.array { t.labels = ls.compactMap { $0.text.flatMap { data.labelNamed($0)?.name } } }
-            txs[i] = t
-        }
-        txs = txs.enumerated().filter { !removed.contains($0.offset) }.map { $0.element }
-        if let add = a["add"]?.array, !add.isEmpty { txs += try parseItems(add, data, numberOffset: txs.count) }
-        return try setDraft(txs, data, &events)
     }
 
     /// Saves the pending draft or performs the pending action. A second call finds nothing pending,
@@ -568,16 +593,6 @@ public final class AssistantEngine {
         pending = nil
         history.append(.assistant("[The user discarded the pending action with the button; nothing was saved.]"))
         return [.resolved(id: p.id, confirmed: false)]
-    }
-
-    /// Removes one operation from the draft (the ✕ next to it).
-    public func removeDraftItem(at index: Int) throws -> [AssistantEvent] {
-        guard let p = pending, p.isDraft, p.transactions.indices.contains(index) else { return [] }
-        var txs = p.transactions
-        txs.remove(at: index)
-        var ev: [AssistantEvent] = []
-        _ = try setDraft(txs, host.data(), &ev)
-        return ev
     }
 
     func pendingDescription() -> String? {

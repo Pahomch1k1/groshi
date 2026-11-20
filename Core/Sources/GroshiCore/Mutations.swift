@@ -64,6 +64,8 @@ public enum Mutation: Hashable {
     case deleteLabel(id: UUID)
     case upsertRecurring(RecurringRule)
     case deleteRecurring(id: UUID)
+    /// New order of the active categories of one kind (expense and income are ordered separately).
+    case reorderCategories(kind: TxKind, order: [UUID])
     case replaceAll(AppData)
     case batch([Mutation])
 
@@ -123,6 +125,14 @@ public enum Mutation: Hashable {
             let before = data.transactions.count
             data.transactions.removeAll { set.contains($0.id) }
             if before - data.transactions.count != set.count { throw MutationError.notFound("transaction") }
+
+        case .reorderCategories(let kind, let order):
+            let active = data.categories(of: kind)
+            var ids = order.filter { id in active.contains { $0.id == id } }
+            for c in active where !ids.contains(c.id) { ids.append(c.id) }
+            for (i, id) in ids.enumerated() {
+                if let k = data.categories.firstIndex(where: { $0.id == id }) { data.categories[k].sortOrder = i + 1 }
+            }
 
         case .upsertCategory(let c):
             let name = c.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -278,4 +288,30 @@ public enum DuplicateCheck {
              (!new.note.isEmpty && TextNorm.normalize(t.note) == TextNorm.normalize(new.note)))
         }
     }
+}
+
+/// Positions in the category grid (4 columns), shared by drag-and-drop and the assistant.
+public enum CategoryOrder {
+    public static let columns = 4
+
+    public static func ids(_ data: AppData, _ kind: TxKind) -> [UUID] { data.categories(of: kind).map { $0.id } }
+
+    /// Order after moving `id` to `index` (0-based, clamped); the others shift.
+    public static func moving(_ id: UUID, to index: Int, kind: TxKind, in data: AppData) -> [UUID] {
+        var list = ids(data, kind)
+        guard let from = list.firstIndex(of: id) else { return list }
+        list.remove(at: from)
+        list.insert(id, at: max(0, min(index, list.count)))
+        return list
+    }
+
+    public static func swapping(_ a: UUID, _ b: UUID, kind: TxKind, in data: AppData) -> [UUID] {
+        var list = ids(data, kind)
+        guard let i = list.firstIndex(of: a), let j = list.firstIndex(of: b) else { return list }
+        list.swapAt(i, j)
+        return list
+    }
+
+    /// Row and column (1-based) → list position (1-based): row 2, column 3 → 7.
+    public static func position(row: Int, column: Int) -> Int { (row - 1) * columns + column }
 }

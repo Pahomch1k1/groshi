@@ -58,85 +58,120 @@ final class V03Tests: XCTestCase {
         XCTAssertTrue(net.requests.last!.contains { $0.role == "user" && $0.content == "Добавь тысячу гривен на развлечения" })
     }
 
-    func testSevenOperationsOverTwoDaysAreOneDraft() async throws {
+    func testSevenOperationsOverTwoDaysAreSavedAtOnce() async throws {
         let items = [
             item("expense", "1000", "Развлечения", "2026-11-11"), item("expense", "450", "Кафе и рестораны", "2026-11-11"),
             item("expense", "300", "Продукты", "2026-11-11"), item("expense", "1500", "Бензин", "2026-11-11"),
             item("expense", "200", "Транспорт", "2026-11-11"), item("expense", "800", "Кафе и рестораны", "2026-11-12"),
             item("income", "15000", "Зарплата", "2026-11-12")
         ]
-        net.queue = [add(items), .assistant("Распознал 7 операций, сохранить?")]
+        net.queue = [add(items), .assistant("Сохранено 7 операций.")]
         let r = try await engine.send("За 11 ноября … За 12 ноября …")
-        XCTAssertTrue(t.data.transactions.isEmpty, "a draft is not saved before confirmation")
-        guard case .pending(let p) = r.events.last else { return XCTFail("expected a draft") }
-        XCTAssertEqual(p.reason, .batch)
-        XCTAssertEqual(p.transactions.count, 7)
-        XCTAssertEqual(engine.pending?.id, p.id)
-        // The pending draft is in the system prompt of the next request.
-        net.queue = [net.call("confirm_pending", "{}"), .assistant("Сохранено 7 операций.")]
-        let r2 = try await engine.send("Да")
-        XCTAssertTrue(net.requests[net.requests.count - 2].first!.content!.contains("Draft of 7 operation(s)"))
-        XCTAssertEqual(t.data.transactions.count, 7)
+        XCTAssertEqual(t.data.transactions.count, 7, "saved without a confirmation step")
+        XCTAssertNil(engine.pending)
+        guard case .saved(let saved) = r.events.last else { return XCTFail("expected saved") }
+        XCTAssertEqual(saved.count, 7)
         XCTAssertEqual(t.data.transactions.filter { $0.kind == .income }.count, 1)
         XCTAssertEqual(Set(t.data.transactions.map { ymd($0.date) }), ["2026-11-11", "2026-11-12"])
         XCTAssertEqual(t.data.transactions.filter { ymd($0.date) == "2026-11-11" }.count, 5)
-        XCTAssertTrue(r2.events.contains(.resolved(id: p.id, confirmed: true)))
-        XCTAssertNil(engine.pending)
-        // A repeated "да" or a late button tap saves nothing more.
-        var ev: [AssistantEvent] = []
-        XCTAssertEqual(engine.execute("confirm_pending", [:], events: &ev)["status"], "error")
-        XCTAssertTrue(try engine.confirmPending().isEmpty)
-        XCTAssertEqual(t.data.transactions.count, 7)
-        // One undo removes the whole confirmed batch.
+        // The tool result gives ids for corrections and tells the model not to ask.
+        let tool = engine.history.first { $0.role == "tool" }!.content!
+        XCTAssertTrue(tool.contains("\"saved\"") && tool.contains("do not ask to confirm"))
+        // One undo removes the whole command.
         XCTAssertNotNil(t.host.undo())
         XCTAssertTrue(t.data.transactions.isEmpty)
     }
 
-    func testCorrectionsBeforeSaving() async throws {
-        net.queue = [add([item("expense", "450", "Кафе и рестораны", "2026-11-11"), item("expense", "300", "Продукты", "2026-11-11"),
-                          item("expense", "200", "Транспорт", "2026-11-11")]), .assistant("Сохранить?")]
-        let r = try await engine.send("450 пицца, 300 магазин, 200 такси за 11 ноября")
-        guard case .pending(let p) = r.events.last else { return XCTFail() }
-        let revise = #"{"changes":[{"number":1,"amount":"500"},{"number":3,"remove":true}],"add":[{"kind":"expense","amount":"90","category":"Связь и интернет","date":"2026-11-12"}]}"#
-        net.queue = [net.call("revise_draft", revise), .assistant("Исправил. Сохранить?")]
-        let r2 = try await engine.send("Пицца не 450, а 500, такси убери и добавь 90 на связь за 12-е")
-        guard case .pending(let p2) = r2.events.last else { return XCTFail() }
-        XCTAssertEqual(p2.id, p.id, "the same draft card is updated")
-        XCTAssertEqual(p2.transactions.map { $0.amountMinor }, [50_000, 30_000, 9_000])
-        XCTAssertTrue(t.data.transactions.isEmpty)
-        // A button: drop one more item, then confirm.
-        _ = try engine.removeDraftItem(at: 1)
-        XCTAssertEqual(engine.pending?.transactions.count, 2)
-        let ev = try engine.confirmPending()
-        XCTAssertTrue(ev.contains(.resolved(id: p.id, confirmed: true)))
-        XCTAssertEqual(t.data.transactions.map { $0.amountMinor }.sorted(), [9_000, 50_000])
-        // The model learns about the button.
-        XCTAssertTrue(engine.history.last!.content!.contains("confirmed with the button"))
-    }
-
-    func testCancelAndAppendToDraft() async throws {
-        net.queue = [add([item("expense", "100", "Продукты", "2026-11-19"), item("expense", "200", "Продукты", "2026-11-19")]), .assistant("?")]
-        _ = try await engine.send("100 и 200 на продукты вчера")
-        net.queue = [add([item("expense", "50", "Транспорт", "2026-11-19")]), .assistant("?")]
-        _ = try await engine.send("и ещё 50 на транспорт")
-        XCTAssertEqual(engine.pending?.transactions.count, 3, "new items are appended to the open draft")
-        XCTAssertTrue(t.data.transactions.isEmpty)
-        net.queue = [net.call("cancel_pending", "{}"), .assistant("Отменил.")]
-        let r = try await engine.send("Нет, не надо")
-        XCTAssertNil(engine.pending)
-        XCTAssertTrue(t.data.transactions.isEmpty)
-        XCTAssertTrue(r.events.contains { if case .resolved(_, false) = $0 { return true }; return false })
+    func testCorrectionRightAfterSavingUsesReturnedIds() async throws {
+        net.queue = [add([item("expense", "450", "Кафе и рестораны", "2026-11-11"), item("expense", "200", "Транспорт", "2026-11-11")]),
+                     .assistant("Сохранено 2 операции.")]
+        _ = try await engine.send("450 пицца и 200 такси за 11 ноября")
+        let tool = JSON.parse(engine.history.first { $0.role == "tool" }!.content!)!
+        let firstID = String(tool["items"]!.array![0].text!.prefix(8))
+        net.queue = [net.call("update_transactions", "{\"ids\":[\"\(firstID)\"],\"amount\":\"500\"}"), .assistant("Исправил.")]
+        _ = try await engine.send("Пиццу не 450, а 500")
+        XCTAssertEqual(t.data.transactions.map { $0.amountMinor }.sorted(), [20_000, 50_000])
+        XCTAssertEqual(t.data.transactions.count, 2, "corrected, not added again")
     }
 
     func testThirtyOperationsInOneCommand() async throws {
         let cats = ["Продукты", "Транспорт", "Кафе и рестораны", "Бензин", "Развлечения", "Одежда"]
         let items = (0..<30).map { i in item("expense", "\(100 + i)", cats[i % cats.count], "2026-11-\(String(format: "%02d", 1 + i % 19))") }
-        net.queue = [add(items), .assistant("Распознал 30 операций, сохранить?")]
+        net.queue = [add(items), .assistant("Сохранено 30 операций.")]
         _ = try await engine.send("тридцать операций")
-        XCTAssertEqual(engine.pending?.transactions.count, 30)
-        _ = try engine.confirmPending()
         XCTAssertEqual(t.data.transactions.count, 30)
         XCTAssertEqual(t.data.transactions.reduce(0) { $0 + $1.amountMinor }, (0..<30).reduce(Int64(0)) { $0 + Int64(100 + $1) * 100 })
+    }
+
+    func testRepeatedCommandWaitsAndCanBeCancelled() async throws {
+        let cmd = [item("expense", "100", "Продукты", "2026-11-19"), item("expense", "200", "Транспорт", "2026-11-19")]
+        net.queue = [add(cmd), .assistant("Сохранено.")]
+        _ = try await engine.send("100 продукты и 200 транспорт вчера")
+        net.queue = [add(cmd), .assistant("Похоже на дубль, всё равно добавить?")]
+        let r = try await engine.send("100 продукты и 200 транспорт вчера")
+        guard case .pending(let p) = r.events.last else { return XCTFail("expected a duplicate question") }
+        XCTAssertEqual(p.reason, .possibleDuplicate)
+        XCTAssertEqual(t.data.transactions.count, 2)
+        net.queue = [net.call("cancel_pending", "{}"), .assistant("Не добавляю.")]
+        _ = try await engine.send("Нет")
+        XCTAssertNil(engine.pending)
+        XCTAssertEqual(t.data.transactions.count, 2)
+    }
+
+    // MARK: Category order
+
+    func names(_ kind: TxKind = .expense) -> [String] { t.data.categories(of: kind).map { $0.name } }
+
+    func testMoveCategoryByPositionRowColumnAfterAndSwap() throws {
+        var ev: [AssistantEvent] = []
+        let start = names()
+        XCTAssertEqual(engine.execute("move_category", ["name": "Одежда", "position": 1], events: &ev)["status"], "done")
+        XCTAssertEqual(names().first, "Одежда")
+        XCTAssertEqual(Array(names().dropFirst()), start.filter { $0 != "Одежда" }, "the others shift")
+        // Row 2, place 3 = position 7.
+        XCTAssertEqual(engine.execute("move_category", ["name": "Транспорт", "row": 2, "column": 3], events: &ev)["status"], "done")
+        XCTAssertEqual(names()[6], "Транспорт")
+        XCTAssertEqual(engine.execute("move_category", ["name": "Бензин", "after": "Одежда"], events: &ev)["status"], "done")
+        XCTAssertEqual(Array(names().prefix(2)), ["Одежда", "Бензин"])
+        let before = names()
+        XCTAssertEqual(engine.execute("move_category", ["name": "Одежда", "swap_with": "Продукты"], events: &ev)["status"], "done")
+        let i = before.firstIndex(of: "Продукты")!
+        XCTAssertEqual(names()[0], "Продукты")
+        XCTAssertEqual(names()[i], "Одежда")
+        // Income order is separate and untouched.
+        let income = names(.income)
+        XCTAssertEqual(engine.execute("move_category", ["name": "Зарплата", "kind": "income", "position": 3], events: &ev)["status"], "done")
+        XCTAssertEqual(names(.income)[2], "Зарплата")
+        XCTAssertEqual(names().prefix(1).first, "Продукты")
+        XCTAssertNotEqual(names(.income), income)
+        // Each move is one undo step.
+        XCTAssertNotNil(t.host.undo())
+        XCTAssertEqual(names(.income), income)
+    }
+
+    func testCreateCategoryAtTheStartAndOrderSurvivesSaving() throws {
+        var ev: [AssistantEvent] = []
+        let r = engine.execute("create_category", ["name": "Кальян", "kind": "expense", "icon": "💨", "position": 1], events: &ev)
+        XCTAssertEqual(r["status"], "done")
+        XCTAssertEqual(names().first, "Кальян")
+        XCTAssertEqual(engine.execute("create_category", ["name": "Кальян", "kind": "expense"], events: &ev)["status"], "error", "no duplicate categories")
+        // One undo removes the category together with its placement.
+        XCTAssertNotNil(t.host.undo())
+        XCTAssertNil(t.data.categoryNamed("Кальян"))
+        _ = engine.execute("create_category", ["name": "Кальян", "kind": "expense", "position": 2], events: &ev)
+        // The order is stored in the data (sortOrder), so it survives encoding and a restart.
+        let reloaded = try JSONDecoder().decode(AppData.self, from: JSONEncoder().encode(t.data))
+        XCTAssertEqual(reloaded.categories(of: .expense).map { $0.name }, names())
+        XCTAssertEqual(names()[1], "Кальян")
+    }
+
+    func testReorderMutationFromDragAndDrop() throws {
+        var d = t.data
+        let ids = CategoryOrder.ids(d, .expense)
+        let moved = CategoryOrder.moving(ids[5], to: 0, kind: .expense, in: d)
+        try Mutation.reorderCategories(kind: .expense, order: moved).apply(to: &d)
+        XCTAssertEqual(CategoryOrder.ids(d, .expense), moved)
+        XCTAssertEqual(CategoryOrder.position(row: 2, column: 3), 7)
     }
 
     func testDropAfterSavingDoesNotDuplicateOnRetry() async throws {
@@ -183,7 +218,7 @@ final class V03Tests: XCTestCase {
         XCTAssertTrue(p.contains("yesterday = 2026-11-19"))
         XCTAssertTrue(p.contains("→ 2026-11-03"))
         let names = AssistantTools.all.compactMap { $0["function"]?["name"]?.text }
-        XCTAssertTrue(Set(names).isSuperset(of: ["add_transactions", "revise_draft", "confirm_pending", "cancel_pending", "undo_last_action", "create_category"]))
+        XCTAssertTrue(Set(names).isSuperset(of: ["add_transactions", "move_category", "confirm_pending", "cancel_pending", "undo_last_action", "create_category"]))
     }
 
     func testOldAISettingsStillDecode() throws {

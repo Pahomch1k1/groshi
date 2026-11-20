@@ -38,27 +38,19 @@ public enum AssistantTools {
         "additionalProperties": false
     ]
 
-    static let draftChange: JSON = [
-        "type": "object",
-        "properties": [
-            "number": ["type": "integer", "description": "Item number in the draft (1-based)."],
-            "remove": ["type": "boolean", "description": "true to drop this item from the draft."],
-            "kind": kind,
-            "amount": str("New amount"), "currency": str("ISO code"), "category": str("New category name"),
-            "wallet": str("Wallet name"), "date": str("YYYY-MM-DD"), "time": str("HH:mm"), "note": str("New note"),
-            "labels": ["type": "array", "items": ["type": "string"], "description": "Replace labels"]
-        ],
-        "required": ["number"],
-        "additionalProperties": false
+    static let placementFields: [String: JSON] = [
+        "position": ["type": "integer", "description": "1-based place in the list: 1 = first (top-left)."],
+        "row": ["type": "integer", "description": "Grid row, 1-based (use with column)."],
+        "column": ["type": "integer", "description": "Grid column 1…4 (use with row). Row 2, column 3 = position 7."],
+        "after": str("Put it right after this category"),
+        "before": str("Put it right before this category")
     ]
 
     public static let all: [JSON] = [
-        fn("add_transactions", "Record income/expense transactions. Put ALL operations from the user's message into ONE call (any number of items, each with its own date). One item is saved at once; several items become a draft the user confirms once. While a draft is pending, new items are appended to it.",
+        fn("add_transactions", "Record income/expense transactions; they are saved immediately. Put ALL operations from the user's message into ONE call (any number of items, each with its own date). The result lists the saved items with ids, usable for corrections with update_transactions.",
            ["items": ["type": "array", "items": txItem]], required: ["items"]),
-        fn("revise_draft", "Correct the pending draft before it is saved: change or remove items by number, or add items. Use when the user corrects recognised data ('не 450, а 500', 'убери такси', 'пиццу в Food').",
-           ["changes": ["type": "array", "items": draftChange], "add": ["type": "array", "items": txItem]]),
-        fn("confirm_pending", "Save the pending draft / perform the pending action, when the user agrees ('да', 'так', 'сохрани', 'подтверждаю', 'yes').", [:]),
-        fn("cancel_pending", "Discard the pending draft / action when the user declines ('нет', 'отмена', 'не надо').", [:]),
+        fn("confirm_pending", "Perform the pending action (a possible duplicate, a change of several operations, a deletion) when the user agrees ('да', 'так', 'добавь всё равно', 'yes').", [:]),
+        fn("cancel_pending", "Drop the pending action when the user declines ('нет', 'отмена', 'не надо').", [:]),
         fn("add_transfer", "Move money between two of the user's own wallets (withdraw cash from a card, top up savings, move to another account). A transfer is NOT income or expense.",
            ["from_wallet": str("Source wallet name"), "to_wallet": str("Destination wallet name"),
             "amount": str("Amount taken from the source wallet, plain decimal string"),
@@ -84,10 +76,13 @@ public enum AssistantTools {
             "group_by": ["type": "string", "enum": ["none", "category", "wallet", "month", "day"]]],
            required: ["date_from", "date_to"]),
         fn("wallet_balances", "Current balance of every wallet.", [:]),
-        fn("create_category", "Create a category.",
+        fn("create_category", "Create a category. Optionally place it in the grid right away (same placement fields as move_category).",
            ["name": str("Name"), "kind": kind,
             "icon": str("An SF Symbols name (e.g. 'car.fill', 'cup.and.saucer.fill', 'smoke.fill') or a single emoji."),
-            "color": str("Hex color like #FF9F43")], required: ["name", "kind"]),
+            "color": str("Hex color like #FF9F43")].merging(placementFields) { a, _ in a }, required: ["name", "kind"]),
+        fn("move_category", "Change where a category stands in the category grid (4 columns; expense and income are ordered separately). Give exactly one of: position, row+column, after, before, swap_with.",
+           ["name": str("Category to move"), "kind": kind,
+            "swap_with": str("Category to swap places with")].merging(placementFields) { a, _ in a }, required: ["name"]),
         fn("update_category", "Rename a category or change its icon/color.",
            ["name": str("Current name"), "kind": kind, "new_name": str("New name"),
             "icon": str("SF Symbols name or a single emoji"), "color": str("Hex color")], required: ["name"]),
@@ -127,17 +122,18 @@ public enum AssistantTools {
         Labels: \(labelList.isEmpty ? "-" : labelList).
 
         Rules:
-        - The user speaks Russian, Ukrainian or English, mostly by voice (transcripts may contain recognition errors and numbers written as words). Reply in \(replyLanguage) unless the user clearly uses another language. Replies are read aloud: keep them to one or two short sentences, no lists, no markdown, no ids.
+        - The user speaks Russian, Ukrainian or English, mostly by voice (transcripts may contain recognition errors and numbers written as words). Reply in \(replyLanguage) unless the user clearly uses another language. Replies are shown as text: keep them to one or two short sentences, no lists, no markdown, no ids.
         - Moving money between the user's own wallets ("снял наличные с карты", "перевёл на копилку", "поменял доллары") is a transfer: use add_transfer, never add_transactions. Transfers do not count as income or expense.
         - To record money use add_transactions with ALL operations of the message in ONE call, however many there are (5, 10, 30…), each item with its own date. A date said once applies to the operations that follow it until another date is said ("За 11 ноября … За 12 ноября …"). "гривен/грн/гривень/₴" = UAH, "баксов/долларов" = USD; "тысяча/тисяча/тыщу" = 1000, "полторы тысячи" = 1500. With one wallet and no currency named, omit wallet and currency.
         - Dates: words like "сегодня/сьогодні/today", "вчера/вчора/yesterday", "позавчера", "в пятницу", "11 ноября", "за 12-е", "за то же число" ARE stated dates — convert them yourself and record without asking. Ask "За какую дату?" only when the message contains no date at all for some operations (e.g. "Добавь тысячу гривен на игры"); then wait and do not assume today. When the user answers with just the date, record the operations from their previous message with it at once — do not ask them to repeat the command and do not ask again.
         - Categories: choose only from the lists above, matching by meaning across languages (the names may be English while the user speaks Russian or Ukrainian: игры/ігри → Games, бензин/пальне/заправка → Gas, такси/таксі → Taxi, аптека → Pharmacy, одежда/одяг → Clothes, пицца/шаурма/ресторан → the restaurant or cafe category, магазин/продукты/супермаркет → the groceries/food category, зарплата/за работу/за роботу → Salary). Never invent category names in add_transactions. Do not create categories on your own initiative; but when the user asks to create, rename or change a category ("создай категорию…", "переименуй…", "поменяй иконку…"), do it right away with create_category / update_category / delete_category. If two categories fit equally well or none fits, ask instead of guessing.
         - Amount and direction are mandatory: if the amount is missing, or it is unclear whether money came in or went out, ask one short clarifying question. Ask only about what is really missing; record nothing invented.
-        - Several items become a draft: after add_transactions returns status "draft", reply with one short sentence like "Распознал 7 операций на сумму …, сохранить?" — the app shows the list itself, do not read it out. The user then confirms or corrects by voice: confirmation → confirm_pending; corrections → revise_draft (by item number); refusal → cancel_pending. Never re-send the whole list to correct it.
-        - A single item is saved at once. Confirm it in one sentence in this style: "Расход 1000 UAH, Games, 11 ноября. Добавлено."
-        - To change or delete already saved operations, first call find_transactions, then use the returned ids. Never guess ids. "Отмени/верни как было" for the last change → undo_last_action.
+        - Operations with everything known are saved immediately — there is no confirmation step. The app shows the saved list itself with "Исправить" and "Отменить" buttons, so reply with one short sentence only: "Сохранено 3 операции на 1800 UAH." or for one: "Расход 1000 UAH, Games, 11 ноября. Добавлено." Never ask "сохранить?".
+        - Corrections right after saving ("такси было 400", "пиццу в Restaurant", "дата не та") → update_transactions with the ids from the last add_transactions result (no need to search); removing one of them → delete_transactions. "Отмени/верни как было" for the last change → undo_last_action.
+        - Category grid: categories are shown in the order of the lists above, in 4 columns (row 1 = positions 1–4, row 2 = 5–8, …; row 2, place 3 = position 7). To reorder use move_category ("поставь Games на первое место" → position 1; "во вторую строку на третье место" → row 2, column 3; "после Cafe" → after; "поменяй местами Food и Gas" → swap_with). "Создай категорию X и поставь в начало" → create_category with position 1. Expense and income categories are ordered separately.
+        - To change or delete older operations, first call find_transactions, then use the returned ids. Never guess ids.
         - For questions about spending use summarize; compare periods by calling it per period. State the numbers with the currency.
-        - Status "awaiting_user_confirmation" or "possible_duplicate": say briefly what needs confirming ("Похоже на дубль, всё равно добавить?"); the user can answer by voice or with the button. Do not repeat the call.
+        - Status "awaiting_user_confirmation" or "possible_duplicate": nothing was done yet; say briefly what needs confirming ("Похоже на дубль, всё равно добавить?"); the user answers by voice or with the button. Do not repeat the call.
         - Never ask for or reveal API keys. Only request data you need.
         \(pendingBlock)
         """
