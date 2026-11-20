@@ -47,6 +47,8 @@ final class GroshiUITests: XCTestCase {
         shot("02-select-category")
         app.buttons["category-Кафе и рестораны"].tap()
         // Step 2: calculator — 1000 − 150 = 850.
+        // The sheet may still be settling: tap again if the calculator did not open.
+        if !app.buttons["save-button"].waitForExistence(timeout: 3) { app.buttons["category-Кафе и рестораны"].tap() }
         XCTAssertTrue(app.buttons["save-button"].waitForExistence(timeout: 5))
         type("1000"); app.buttons["key-−"].tap(); type("150")
         sleep(1)
