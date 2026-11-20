@@ -15,7 +15,9 @@ import { scenarios } from "./scenarios.mjs";
 const [contractPath, outPath, modelArg] = process.argv.slice(2);
 const model = modelArg || "gpt-4.1-mini";
 const contract = JSON.parse(readFileSync(contractPath, "utf8"));
-let key = process.env.OPENAI_API_KEY;
+// AI_BASE_URL + AI_TOKEN: go through the WorkFlow Spend gateway with a device token instead of the key.
+const baseURL = process.env.AI_BASE_URL || "https://api.openai.com/v1";
+let key = process.env.AI_TOKEN || process.env.OPENAI_API_KEY;
 if (!key && process.env.OPENAI_KEY_FILE) {
   const m = readFileSync(process.env.OPENAI_KEY_FILE, "utf8").match(/^\s*OPENAI_API_KEY\s*=\s*"?([^"\s]+)/m);
   key = m && m[1];
@@ -156,7 +158,7 @@ const usage = { calls: 0, prompt: 0, completion: 0, ms: [] };
 async function complete(messages) {
   for (let attempt = 0; ; attempt++) {
     const t0 = Date.now();
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    const r = await fetch(`${baseURL}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({ model, messages, tools: contract.tools, tool_choice: "auto" }),

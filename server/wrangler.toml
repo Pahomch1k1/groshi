@@ -1,0 +1,19 @@
+# WorkFlow Spend AI gateway — separate Worker in the same Cloudflare account as WorkFlow.
+# Secret (not in this file): OPENAI_API_KEY  →  wrangler secret put OPENAI_API_KEY
+name = "workflow-spend-ai"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[vars]
+ALLOWED_MODELS = "gpt-4.1,gpt-4.1-mini"
+MAX_DEVICES = "1"
+PER_MINUTE = "30"
+PER_DAY = "600"
+GLOBAL_PER_DAY = "1500"
+MAX_OUTPUT_TOKENS = "4000"
+MAX_BODY_BYTES = "200000"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "f9fe79a3cdd44c0fb3e8065a3cf3989e"

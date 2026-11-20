@@ -29,7 +29,7 @@ struct MoreView: View {
                     group {
                         link(L("Экспорт и импорт"), "arrow.up.arrow.down.circle", value: nil, id: "more-data") { DataTransferView() }
                         link(L("Резервная копия"), "externaldrive", value: nil, id: "more-backup") { BackupView() }
-                        link(L("AI-ассистент"), "sparkles", value: Keychain.hasKey ? nil : L("нет ключа"), id: "more-ai") { AISettingsView() }
+                        link(L("AI-ассистент"), "sparkles", value: nil, id: "more-ai") { AISettingsView() }
                     }
                     Text("WorkFlow Spend " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") + " · " + "\(data.transactions.count) " + L("операций"))
                         .font(.system(size: 12)).foregroundStyle(Palette.textTertiary)

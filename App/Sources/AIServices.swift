@@ -1,7 +1,6 @@
 import Foundation
 import Security
 import Speech
-import VisionKit
 import SwiftUI
 import AVFoundation
 import Observation
@@ -58,33 +57,89 @@ final class OpenAITransport: LLMTransport {
 
     func complete(messages: [ChatMessage], tools: [JSON]) async throws -> ChatMessage {
         let s = settings()
-        let key = Keychain.read()
-        let useProxy = !s.proxyURL.trimmingCharacters(in: .whitespaces).isEmpty
-        guard useProxy || key != nil else { throw AIError(message: L("Добавьте ключ OpenAI в «Ещё → AI-ассистент».")) }
-        let url = URL(string: useProxy ? s.proxyURL : "https://api.openai.com/v1/chat/completions")!
+        let body = try JSONEncoder().encode(Body(model: s.model, messages: messages, tools: tools.isEmpty ? nil : tools,
+                                                 tool_choice: tools.isEmpty ? nil : "auto"))
+        let proxy = s.proxyURL.trimmingCharacters(in: .whitespaces)
+        if !proxy.isEmpty, let url = URL(string: proxy) {
+            return try await post(url, token: Keychain.read(), body: body)
+        }
+        if let ownKey = Keychain.read() {
+            // The owner deliberately entered their own key: talk to OpenAI directly.
+            return try await post(URL(string: "https://api.openai.com/v1/chat/completions")!, token: ownKey, body: body)
+        }
+        // Default: the WorkFlow Spend server holds the OpenAI key; this phone has its own device token.
+        let url = Gateway.base.appendingPathComponent("chat/completions")
+        do {
+            return try await post(url, token: try await Gateway.deviceToken(), body: body)
+        } catch let e as HTTPFailure where e.code == 401 {
+            Gateway.forgetToken() // revoked or lost on the server: register again once
+            return try await post(url, token: try await Gateway.deviceToken(), body: body)
+        }
+    }
+
+    struct HTTPFailure: LocalizedError {
+        var code: Int
+        var message: String
+        var errorDescription: String? { message }
+    }
+
+    private func post(_ url: URL, token: String?, body: Data) async throws -> ChatMessage {
         var req = URLRequest(url: url, timeoutInterval: 60)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let key {
-            // For a proxy the stored value is the proxy's own access token, not the OpenAI key.
-            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        req.httpBody = try JSONEncoder().encode(Body(model: s.model, messages: messages, tools: tools.isEmpty ? nil : tools,
-                                                     tool_choice: tools.isEmpty ? nil : "auto"))
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.httpBody = body
         let (data, resp) = try await URLSession.shared.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 200 else {
             let msg = (try? JSONDecoder().decode(ErrorBody.self, from: data).error.message) ?? String(decoding: data.prefix(300), as: UTF8.self)
             switch code {
-            case 401: throw AIError(message: L("Неверный ключ OpenAI (401)."))
-            case 429: throw AIError(message: L("OpenAI: превышен лимит или закончился баланс (429). ") + msg)
-            default: throw AIError(message: "OpenAI \(code): \(msg)")
+            case 401: throw HTTPFailure(code: 401, message: L("Нет доступа к AI (401)."))
+            case 429: throw HTTPFailure(code: 429, message: L("Достигнут лимит запросов к AI, попробуйте позже."))
+            default: throw HTTPFailure(code: code, message: "AI \(code): \(msg)")
             }
         }
         guard let m = try JSONDecoder().decode(Response.self, from: data).choices.first?.message else {
             throw AIError(message: L("Пустой ответ OpenAI"))
         }
         return m
+    }
+}
+
+/// The WorkFlow Spend AI server (Cloudflare Worker "workflow-spend-ai"): it keeps the OpenAI key,
+/// the app only keeps a per-device token in the Keychain, obtained automatically on first use.
+enum Gateway {
+    static let base = URL(string: "https://workflow-spend-ai.espero-hotel-management.workers.dev/v1")!
+    static let tokenAccount = "deviceToken"
+    static let installAccount = "installId"
+
+    static var hasToken: Bool { Keychain.read(account: tokenAccount) != nil }
+
+    static func forgetToken() { Keychain.set("", account: tokenAccount) }
+
+    static func deviceToken() async throws -> String {
+        if let t = Keychain.read(account: tokenAccount) { return t }
+        var install = Keychain.read(account: installAccount)
+        if install == nil {
+            install = UUID().uuidString
+            Keychain.set(install!, account: installAccount)
+        }
+        var req = URLRequest(url: base.appendingPathComponent("register"), timeoutInterval: 30)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["installId": install!, "appVersion": version])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 403 {
+            throw AIError(message: L("Сервер AI не принимает новые устройства. Попросите открыть регистрацию для этого телефона."))
+        }
+        guard code == 200, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = obj["token"] as? String, token.hasPrefix("wfs_") else {
+            throw AIError(message: L("Не удалось подключиться к серверу AI.") + " (\(code))")
+        }
+        Keychain.set(token, account: tokenAccount)
+        return token
     }
 }
 
@@ -256,43 +311,6 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate {
             let d = self.done
             self.done = nil
             d?()
-        }
-    }
-}
-
-/// Scans a QR code with the camera (used to move the OpenAI key from the computer screen
-/// straight into the Keychain, without messengers or the clipboard).
-struct QRScannerView: UIViewControllerRepresentable {
-    var onCode: (String) -> Void
-
-    static var isAvailable: Bool { DataScannerViewController.isSupported && DataScannerViewController.isAvailable }
-
-    func makeUIViewController(context: Context) -> DataScannerViewController {
-        let vc = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])], qualityLevel: .balanced,
-                                           isHighlightingEnabled: true)
-        vc.delegate = context.coordinator
-        try? vc.startScanning()
-        return vc
-    }
-
-    func updateUIViewController(_ vc: DataScannerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onCode: onCode) }
-
-    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
-        let onCode: (String) -> Void
-        var fired = false
-        init(onCode: @escaping (String) -> Void) { self.onCode = onCode }
-        func dataScanner(_ s: DataScannerViewController, didAdd items: [RecognizedItem], allItems: [RecognizedItem]) {
-            guard !fired else { return }
-            for item in items {
-                if case .barcode(let b) = item, let v = b.payloadStringValue {
-                    fired = true
-                    s.stopScanning()
-                    onCode(v)
-                    return
-                }
-            }
         }
     }
 }

@@ -45,7 +45,8 @@ final class AssistantViewModel {
         }
     }
 
-    var hasKey: Bool { ScriptedTransport.isOn || Keychain.hasKey || !store.data.settings.ai.proxyURL.isEmpty }
+    /// Works out of the box through the WorkFlow Spend server; no key setup needed.
+    var hasKey: Bool { true }
     var settings: AISettings { store.data.settings.ai }
 
     func prepare(context: String?, startVoice: Bool) {
@@ -566,10 +567,9 @@ struct AISettingsView: View {
     @State private var hasKey = Keychain.hasKey
     @State private var testing = false
     @State private var testResult: String?
-    @State private var scanning = false
     @State private var keyError: String?
 
-    static let models = ["gpt-4.1", "gpt-4.1-mini", "gpt-5-mini", "gpt-5", "gpt-4o-mini"]
+    static let models = ["gpt-4.1", "gpt-4.1-mini"]
     static let voices = ["ru-RU", "uk-UA", "en-US"]
     static let voiceNames = ["ru-RU": "Русский", "uk-UA": "Українська", "en-US": "English"]
 
@@ -577,38 +577,19 @@ struct AISettingsView: View {
         let ai = store.data.settings.ai
         Form {
             Section {
-                if hasKey {
-                    LabeledContent(L("Ключ"), value: "••••••••")
-                    Button(L("Удалить ключ"), role: .destructive) { Keychain.set(""); hasKey = false; testResult = nil }
-                } else {
-                    if QRScannerView.isAvailable {
-                        Button { scanning = true } label: { Label(L("Сканировать QR-код с ключом"), systemImage: "qrcode.viewfinder") }
-                            .accessibilityIdentifier("key-scan")
-                    }
-                    PasteButton(payloadType: String.self) { strings in
-                        Task { @MainActor in save(strings.first ?? "") }
-                    }
-                    .labelStyle(.titleAndIcon)
-                    SecureField("sk-...", text: $key).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button(L("Сохранить ключ")) { save(key) }.disabled(key.count < 20)
-                    if let e = keyError { Text(e).font(.footnote).foregroundStyle(Palette.expense) }
+                LabeledContent(L("Подключение")) {
+                    Text(hasKey ? L("Свой ключ OpenAI") : L("Сервер WorkFlow Spend")).foregroundStyle(.secondary)
                 }
-            } header: { Text(L("Ключ OpenAI API")) } footer: {
-                Text(L("Ключ хранится в зашифрованной Связке ключей iOS только на этом устройстве, не попадает в код приложения, экспорт и резервные копии. Создать ключ: platform.openai.com → API keys."))
-            }
-            Section {
-                Picker(L("Модель"), selection: Binding(get: { ai.model }, set: { v in store.updateSettings { $0.ai.model = v } })) {
-                    ForEach(Self.models + (Self.models.contains(ai.model) ? [] : [ai.model]), id: \.self) { Text($0).tag($0) }
-                }
-                TextField(L("Другая модель"), text: Binding(get: { ai.model }, set: { v in store.updateSettings { $0.ai.model = v.trimmingCharacters(in: .whitespaces) } }))
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button {
                     Task { await test() }
                 } label: { HStack { Text(L("Проверить подключение")); Spacer(); if testing { ProgressView() } } }
                 .accessibilityIdentifier("ai-test")
                 if let r = testResult { Text(r).font(.footnote).foregroundStyle(.secondary) }
-            } header: { Text(L("Модель")) } footer: {
-                Text(L("gpt-4.1 точнее понимает даты и категории в голосовых командах; gpt-4.1-mini дешевле примерно в 5 раз."))
+                Picker(L("Модель"), selection: Binding(get: { ai.model }, set: { v in store.updateSettings { $0.ai.model = v } })) {
+                    ForEach(Self.models + (Self.models.contains(ai.model) ? [] : [ai.model]), id: \.self) { Text($0).tag($0) }
+                }
+            } header: { Text(L("AI")) } footer: {
+                Text(L("Ассистент работает сразу: ключ OpenAI хранится на сервере WorkFlow Spend, в приложении его нет. Телефон получает свой токен доступа автоматически. gpt-4.1 точнее понимает даты и категории; gpt-4.1-mini дешевле примерно в 5 раз."))
             }
             Section {
                 Picker(L("Язык голоса"), selection: Binding(get: { ai.voiceLocale }, set: { v in store.updateSettings { $0.ai.voiceLocale = v } })) {
@@ -621,10 +602,24 @@ struct AISettingsView: View {
                 Text(L("Речь распознаётся системой iOS; в OpenAI уходит только текст команды. Запись останавливается сама после паузы. Если ассистент задал вопрос или ждёт «да», микрофон включится снова. Удерживайте «+» на главном экране, чтобы сразу начать запись."))
             }
             Section {
-                TextField("https://…", text: Binding(get: { ai.proxyURL }, set: { v in store.updateSettings { $0.ai.proxyURL = v.trimmingCharacters(in: .whitespaces) } }))
-                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-            } header: { Text(L("Прокси (необязательно)")) } footer: {
-                Text(L("Для будущей публикации: адрес своего сервера, который хранит ключ OpenAI. Тогда в поле ключа вводится токен доступа к прокси. Оставьте пустым для прямого подключения."))
+                DisclosureGroup(L("Свой ключ OpenAI (необязательно)")) {
+                    if hasKey {
+                        LabeledContent(L("Ключ"), value: "••••••••")
+                        Button(L("Удалить ключ"), role: .destructive) { Keychain.set(""); hasKey = false; testResult = nil }
+                    } else {
+                        PasteButton(payloadType: String.self) { strings in
+                            Task { @MainActor in save(strings.first ?? "") }
+                        }
+                        .labelStyle(.titleAndIcon)
+                        SecureField("sk-...", text: $key).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Button(L("Сохранить ключ")) { save(key) }.disabled(key.count < 20)
+                        if let e = keyError { Text(e).font(.footnote).foregroundStyle(Palette.expense) }
+                    }
+                    TextField(L("Адрес своего прокси"), text: Binding(get: { ai.proxyURL }, set: { v in store.updateSettings { $0.ai.proxyURL = v.trimmingCharacters(in: .whitespaces) } }))
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+            } footer: {
+                Text(L("Только если хотите обращаться к OpenAI напрямую своим ключом. Ключ хранится в Связке ключей iOS на этом устройстве."))
             }
             Section(L("Что отправляется в OpenAI")) {
                 Text(L("Текст вашей команды, текущая дата, названия категорий и кошельков. Суммы и операции — только те, что нужны для ответа (например, найденные по запросу). Остальная история остаётся на телефоне."))
@@ -632,13 +627,6 @@ struct AISettingsView: View {
             }
         }
         .navigationTitle(L("AI-ассистент"))
-        .sheet(isPresented: $scanning) {
-            QRScannerView { code in
-                scanning = false
-                save(code)
-            }
-            .ignoresSafeArea()
-        }
     }
 
     func save(_ raw: String) {
