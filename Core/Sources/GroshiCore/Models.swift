@@ -186,7 +186,25 @@ public struct AISettings: Codable, Hashable {
     public var voiceLocale: String = "ru-RU"
     /// Automatically send a voice command when recording stops.
     public var autoSendVoice: Bool = true
+    /// Read the assistant's replies aloud.
+    public var speakReplies: Bool = true
+    /// After a spoken question from the assistant, start listening again automatically.
+    public var handsFree: Bool = true
     public init() {}
+
+    enum CodingKeys: String, CodingKey { case enabled, model, proxyURL, voiceLocale, autoSendVoice, speakReplies, handsFree }
+
+    /// Tolerant decoding: files written by older versions lack the newer keys.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? "gpt-4.1-mini"
+        proxyURL = try c.decodeIfPresent(String.self, forKey: .proxyURL) ?? ""
+        voiceLocale = try c.decodeIfPresent(String.self, forKey: .voiceLocale) ?? "ru-RU"
+        autoSendVoice = try c.decodeIfPresent(Bool.self, forKey: .autoSendVoice) ?? true
+        speakReplies = try c.decodeIfPresent(Bool.self, forKey: .speakReplies) ?? true
+        handsFree = try c.decodeIfPresent(Bool.self, forKey: .handsFree) ?? true
+    }
 }
 
 public struct AppSettings: Codable, Hashable {

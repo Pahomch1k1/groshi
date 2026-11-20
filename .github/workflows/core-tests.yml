@@ -14,5 +14,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build and test GroshiCore
         working-directory: Core
-        run: swift test 2>&1 | tail -n 120
+        env:
+          # Tools + system prompt for synthetic data; used by the local live-OpenAI harness.
+          AI_CONTRACT_OUT: ${{ github.workspace }}/ai-contract.json
+        run: swift test 2>&1 | tail -n 150
         shell: bash -o pipefail {0}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-contract
+          path: ai-contract.json
+          if-no-files-found: ignore

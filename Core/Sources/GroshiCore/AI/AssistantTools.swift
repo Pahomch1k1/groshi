@@ -29,18 +29,36 @@ public enum AssistantTools {
             "currency": str("ISO code (UAH, USD, EUR...). Omit to use the wallet currency."),
             "category": str("Exact name of an existing category of the same kind."),
             "wallet": str("Exact wallet name. Omit for the default wallet."),
-            "date": str("YYYY-MM-DD in the user's local time. Omit for today."),
+            "date": str("YYYY-MM-DD in the user's local time: the date the user stated for this operation (explicitly or relatively: 'сегодня', 'вчера', 'за 11 ноября', 'в пятницу'). Never assume it: if the user stated no date, do not call the tool, ask for the date first."),
             "time": str("HH:mm, optional."),
             "note": str("Short comment, e.g. the place or purpose. Optional."),
             "labels": ["type": "array", "items": ["type": "string"], "description": "Existing label names to attach (optional)."]
         ],
-        "required": ["kind", "amount", "category"],
+        "required": ["kind", "amount", "category", "date"],
+        "additionalProperties": false
+    ]
+
+    static let draftChange: JSON = [
+        "type": "object",
+        "properties": [
+            "number": ["type": "integer", "description": "Item number in the draft (1-based)."],
+            "remove": ["type": "boolean", "description": "true to drop this item from the draft."],
+            "kind": kind,
+            "amount": str("New amount"), "currency": str("ISO code"), "category": str("New category name"),
+            "wallet": str("Wallet name"), "date": str("YYYY-MM-DD"), "time": str("HH:mm"), "note": str("New note"),
+            "labels": ["type": "array", "items": ["type": "string"], "description": "Replace labels"]
+        ],
+        "required": ["number"],
         "additionalProperties": false
     ]
 
     public static let all: [JSON] = [
-        fn("add_transactions", "Record one or more income/expense transactions. Use one call with several items for several operations.",
+        fn("add_transactions", "Record income/expense transactions. Put ALL operations from the user's message into ONE call (any number of items, each with its own date). One item is saved at once; several items become a draft the user confirms once. While a draft is pending, new items are appended to it.",
            ["items": ["type": "array", "items": txItem]], required: ["items"]),
+        fn("revise_draft", "Correct the pending draft before it is saved: change or remove items by number, or add items. Use when the user corrects recognised data ('не 450, а 500', 'убери такси', 'пиццу в Food').",
+           ["changes": ["type": "array", "items": draftChange], "add": ["type": "array", "items": txItem]]),
+        fn("confirm_pending", "Save the pending draft / perform the pending action, when the user agrees ('да', 'так', 'сохрани', 'подтверждаю', 'yes').", [:]),
+        fn("cancel_pending", "Discard the pending draft / action when the user declines ('нет', 'отмена', 'не надо').", [:]),
         fn("add_transfer", "Move money between two of the user's own wallets (withdraw cash from a card, top up savings, move to another account). A transfer is NOT income or expense.",
            ["from_wallet": str("Source wallet name"), "to_wallet": str("Destination wallet name"),
             "amount": str("Amount taken from the source wallet, plain decimal string"),
@@ -84,7 +102,7 @@ public enum AssistantTools {
         fn("undo_last_action", "Undo the most recent change made in the app (by the user or by you).", [:])
     ]
 
-    public static func systemPrompt(data: AppData, now: Date, calendar cal: Calendar, replyLanguage: String) -> String {
+    public static func systemPrompt(data: AppData, now: Date, calendar cal: Calendar, replyLanguage: String, pending: String? = nil) -> String {
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX"); df.timeZone = cal.timeZone
         df.dateFormat = "yyyy-MM-dd EEEE HH:mm"
@@ -92,6 +110,7 @@ public enum AssistantTools {
         let inc = data.categories(of: .income).map { $0.name }.joined(separator: ", ")
         let wallets = data.activeWallets.map { "\($0.name) (\($0.currency))" }.joined(separator: ", ")
         let labelList = data.sortedLabels.map { $0.name }.joined(separator: ", ")
+        let pendingBlock = pending.map { "\nPENDING (not saved yet, awaiting the user's answer):\n" + $0 } ?? ""
         return """
         You are the assistant inside a personal finance iPhone app. You operate the app through tools; you are not a general chatbot.
         Now: \(df.string(from: now)) (\(cal.timeZone.identifier)). Week starts on Monday.
@@ -102,18 +121,19 @@ public enum AssistantTools {
         Labels: \(labelList.isEmpty ? "-" : labelList).
 
         Rules:
-        - The user speaks Russian, Ukrainian or English, often by voice (transcripts may contain errors). Reply briefly in \(replyLanguage) unless the user clearly uses another language.
+        - The user speaks Russian, Ukrainian or English, mostly by voice (transcripts may contain recognition errors and numbers written as words). Reply in \(replyLanguage) unless the user clearly uses another language. Replies are read aloud: keep them to one or two short sentences, no lists, no markdown, no ids.
         - Moving money between the user's own wallets ("снял наличные с карты", "перевёл на копилку", "поменял доллары") is a transfer: use add_transfer, never add_transactions. Transfers do not count as income or expense.
-        - To record money use add_transactions; put all operations from one message into a single call. "гривен/грн/₴" = UAH, "баксов/долларов" = USD.
-        - Pick the best matching existing category (e.g. restaurant → cafe/restaurants category, petrol → fuel or car). Never invent category names in add_transactions; if nothing fits, use the "other" category of that kind, or ask.
-        - If the amount or the direction (income vs expense) is missing or ambiguous, ask one short clarifying question instead of guessing.
-        - Resolve relative dates ("вчера", "в пятницу", "позавчора") to YYYY-MM-DD yourself.
-        - To change or delete existing operations, first call find_transactions, then use the returned ids. Never guess ids.
+        - To record money use add_transactions with ALL operations of the message in ONE call, however many there are (5, 10, 30…), each item with its own date. A date said once applies to the operations that follow it until another date is said ("За 11 ноября … За 12 ноября …"). "гривен/грн/гривень/₴" = UAH, "баксов/долларов" = USD; "тысяча/тисяча/тыщу" = 1000, "полторы тысячи" = 1500. With one wallet and no currency named, omit wallet and currency.
+        - Dates: use only a date the user actually stated (explicitly or relatively). If the date is not stated for some operations, ask one short question ("За какую дату?") and wait; do not assume today. When the user answers with just the date, record the operations from their previous message with it — do not ask them to repeat the command.
+        - Categories: choose only from the lists above, matching by meaning across languages (the names may be English while the user speaks Russian or Ukrainian: игры/ігри → Games, бензин/пальне/заправка → Gas, такси/таксі → Taxi, аптека → Pharmacy, одежда/одяг → Clothes, пицца/шаурма/ресторан → the restaurant or cafe category, магазин/продукты/супермаркет → the groceries/food category, зарплата/за работу/за роботу → Salary). Never invent category names and never create a category unless the user explicitly asks to create one. If two categories fit equally well or none fits, ask instead of guessing.
+        - Amount and direction are mandatory: if the amount is missing, or it is unclear whether money came in or went out, ask one short clarifying question. Ask only about what is really missing; record nothing invented.
+        - Several items become a draft: after add_transactions returns status "draft", reply with one short sentence like "Распознал 7 операций на сумму …, сохранить?" — the app shows the list itself, do not read it out. The user then confirms or corrects by voice: confirmation → confirm_pending; corrections → revise_draft (by item number); refusal → cancel_pending. Never re-send the whole list to correct it.
+        - A single item is saved at once. Confirm it in one sentence in this style: "Расход 1000 UAH, Games, 11 ноября. Добавлено."
+        - To change or delete already saved operations, first call find_transactions, then use the returned ids. Never guess ids. "Отмени/верни как было" for the last change → undo_last_action.
         - For questions about spending use summarize; compare periods by calling it per period. State the numbers with the currency.
-        - When a tool returns status "awaiting_user_confirmation", tell the user to confirm with the button shown and do not repeat the call.
-        - When a tool returns status "possible_duplicate", tell the user it looks like a duplicate and that they can confirm with the button.
-        - After changes, confirm what was done in one short sentence. Do not mention ids.
+        - Status "awaiting_user_confirmation" or "possible_duplicate": say briefly what needs confirming ("Похоже на дубль, всё равно добавить?"); the user can answer by voice or with the button. Do not repeat the call.
         - Never ask for or reveal API keys. Only request data you need.
+        \(pendingBlock)
         """
     }
 }

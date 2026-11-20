@@ -51,7 +51,7 @@ final class AssistantTests: XCTestCase {
 
     func testAddSingleAndMultiple() async throws {
         mock.queue = [
-            mock.call("add_transactions", #"{"items":[{"kind":"expense","amount":"850","category":"Кафе и рестораны","note":"ресторан"}]}"#),
+            mock.call("add_transactions", #"{"items":[{"date":"2026-11-19","kind":"expense","amount":"850","category":"Кафе и рестораны","note":"ресторан"}]}"#),
             .assistant("Записал 850 ₴ в Кафе.")
         ]
         let r = try await engine.send("Сегодня потратил 850 гривен в ресторане")
@@ -66,10 +66,11 @@ final class AssistantTests: XCTestCase {
         XCTAssertFalse(sys.contains("850"))
 
         mock.queue = [
-            mock.call("add_transactions", #"{"items":[{"kind":"expense","amount":"1200","category":"Бензин"},{"kind":"expense","amount":"450","category":"Автомобиль","note":"мойка"}]}"#),
+            mock.call("add_transactions", #"{"items":[{"date":"2026-11-19","kind":"expense","amount":"1200","category":"Бензин"},{"date":"2026-11-19","kind":"expense","amount":"450","category":"Автомобиль","note":"мойка"}]}"#),
             .assistant("Готово")
         ]
         _ = try await engine.send("Запиши 1200 гривен на бензин и 450 на мойку")
+        _ = try engine.confirmPending()
         XCTAssertEqual(t.data.transactions.count, 3)
 
         mock.queue = [
@@ -84,7 +85,7 @@ final class AssistantTests: XCTestCase {
     }
 
     func testDuplicateNeedsConfirmation() async throws {
-        let add = #"{"items":[{"kind":"expense","amount":"850","category":"Кафе и рестораны"}]}"#
+        let add = #"{"items":[{"date":"2026-11-19","kind":"expense","amount":"850","category":"Кафе и рестораны"}]}"#
         mock.queue = [mock.call("add_transactions", add), .assistant("ok")]
         _ = try await engine.send("850 ресторан")
         mock.queue = [mock.call("add_transactions", add), .assistant("Похоже на дубль")]
@@ -97,15 +98,16 @@ final class AssistantTests: XCTestCase {
     }
 
     func testSameCallTwiceInOneTurnIsIgnored() async throws {
-        let add = #"{"items":[{"kind":"expense","amount":"99","category":"Продукты"}]}"#
+        let add = #"{"items":[{"date":"2026-11-19","kind":"expense","amount":"99","category":"Продукты"}]}"#
         mock.queue = [mock.call("add_transactions", add), mock.call("add_transactions", add), .assistant("ok")]
         _ = try await engine.send("99 продукты")
         XCTAssertEqual(t.data.transactions.count, 1)
     }
 
     func testFindDeleteUndo() async throws {
-        mock.queue = [mock.call("add_transactions", #"{"items":[{"kind":"expense","amount":"100","category":"Продукты"},{"kind":"expense","amount":"200","category":"Одежда"}]}"#), .assistant("ok")]
+        mock.queue = [mock.call("add_transactions", #"{"items":[{"date":"2026-11-19","kind":"expense","amount":"100","category":"Продукты"},{"date":"2026-11-19","kind":"expense","amount":"200","category":"Одежда"}]}"#), .assistant("ok")]
         _ = try await engine.send("add")
+        _ = try engine.confirmPending()
         // Find the last expense and delete it.
         var events: [AssistantEvent] = []
         let found = engine.execute("find_transactions", JSON.parse(#"{"kind":"expense","limit":1}"#)!, events: &events)
@@ -119,8 +121,9 @@ final class AssistantTests: XCTestCase {
     }
 
     func testMassDeleteNeedsConfirmation() async throws {
-        mock.queue = [mock.call("add_transactions", #"{"items":[{"kind":"expense","amount":"100","category":"Продукты"},{"kind":"expense","amount":"200","category":"Одежда"}]}"#), .assistant("ok")]
+        mock.queue = [mock.call("add_transactions", #"{"items":[{"date":"2026-11-19","kind":"expense","amount":"100","category":"Продукты"},{"date":"2026-11-19","kind":"expense","amount":"200","category":"Одежда"}]}"#), .assistant("ok")]
         _ = try await engine.send("add")
+        _ = try engine.confirmPending()
         var events: [AssistantEvent] = []
         let ids = t.data.transactions.map { JSON.string(String($0.id.uuidString.prefix(8))) }
         let r = engine.execute("delete_transactions", .object(["ids": .array(ids)]), events: &events)
@@ -134,6 +137,7 @@ final class AssistantTests: XCTestCase {
     func testMoveToOtherCategoryAndSummaries() async throws {
         var events: [AssistantEvent] = []
         _ = engine.execute("add_transactions", JSON.parse(#"{"items":[{"kind":"expense","amount":"1500","category":"Покупки","date":"2026-11-18","note":"куртка"},{"kind":"expense","amount":"500","category":"Одежда","date":"2026-10-10"},{"kind":"expense","amount":"700","category":"Одежда","date":"2026-11-02"}]}"#)!, events: &events)
+        _ = try engine.confirmPending()
         let found = engine.execute("find_transactions", JSON.parse(#"{"date_from":"2026-11-18","date_to":"2026-11-18"}"#)!, events: &events)
         let id = found["items"]!.array![0]["id"]!.string!
         let upd = engine.execute("update_transactions", .object(["ids": .array([.string(id)]), "category": "Одежда"]), events: &events)
@@ -154,7 +158,7 @@ final class AssistantTests: XCTestCase {
         let del = engine.execute("delete_category", JSON.parse(#"{"name":"Кальян"}"#)!, events: &events)
         XCTAssertEqual(del["status"], "awaiting_user_confirmation")
         XCTAssertNotNil(t.data.categoryNamed("Кальян"))
-        let unknown = engine.execute("add_transactions", JSON.parse(#"{"items":[{"kind":"expense","amount":"1","category":"Несуществующая"}]}"#)!, events: &events)
+        let unknown = engine.execute("add_transactions", JSON.parse(#"{"items":[{"date":"2026-11-19","kind":"expense","amount":"1","category":"Несуществующая"}]}"#)!, events: &events)
         XCTAssertEqual(unknown["status"], "error")
         XCTAssertEqual(engine.execute("create_wallet", JSON.parse(#"{"name":"Доллары","currency":"usd","initial_balance":"300"}"#)!, events: &events)["status"], "done")
         XCTAssertEqual(t.data.walletNamed("Доллары")?.initialBalanceMinor, 30000)
@@ -162,7 +166,7 @@ final class AssistantTests: XCTestCase {
 
     func testMissingAmountIsError() {
         var events: [AssistantEvent] = []
-        let r = engine.execute("add_transactions", JSON.parse(#"{"items":[{"kind":"expense","amount":"","category":"Продукты"}]}"#)!, events: &events)
+        let r = engine.execute("add_transactions", JSON.parse(#"{"items":[{"date":"2026-11-19","kind":"expense","amount":"","category":"Продукты"}]}"#)!, events: &events)
         XCTAssertEqual(r["status"], "error")
         XCTAssertTrue(t.data.transactions.isEmpty)
     }

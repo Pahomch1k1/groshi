@@ -39,17 +39,38 @@ public protocol LLMTransport {
 
 /// A change the assistant wants to make that needs an explicit tap from the user.
 public struct PendingAction: Identifiable, Hashable {
-    public enum Reason: String, Hashable { case massChange, destructive, possibleDuplicate }
+    public enum Reason: String, Hashable { case massChange, destructive, possibleDuplicate, batch }
     public var id = UUID()
     public var mutation: Mutation
     public var summary: String
     public var reason: Reason
+    /// Draft items flagged as possible duplicates of saved operations (indexes into `transactions`).
+    public var duplicateIndexes: [Int] = []
+
+    /// Transactions of an add-draft (empty for other actions).
+    public var transactions: [Txn] {
+        if case .addTransactions(let t) = mutation { return t }
+        return []
+    }
+    public var isDraft: Bool { if case .addTransactions = mutation { return true }; return false }
 }
 
 public enum AssistantEvent: Hashable {
     case applied(summary: String)
+    /// New operations were saved (single add or a confirmed draft).
+    case saved([Txn])
+    /// A pending action was created or changed (same id while a draft is being revised).
     case pending(PendingAction)
+    /// The pending action with this id was confirmed (true) or discarded (false).
+    case resolved(id: UUID, confirmed: Bool)
     case undone(summary: String)
+
+    public var isChange: Bool {
+        switch self {
+        case .applied, .saved, .undone, .resolved: return true
+        case .pending: return true
+        }
+    }
 }
 
 /// Bridge to the app's store (which keeps undo history and persists).
@@ -81,21 +102,40 @@ public final class AssistantEngine {
         self.transport = transport; self.host = host; self.calendar = calendar; self.now = now; self.replyLanguage = replyLanguage
     }
 
-    public func reset() { history = [] }
+    /// The action waiting for the user's yes/no (a draft of several operations, a duplicate, a mass change…).
+    public private(set) var pending: PendingAction?
+
+    public func reset() { history = []; pending = nil }
 
     public struct TurnResult {
         public var reply: String
         public var events: [AssistantEvent]
+        /// The connection dropped after changes were already made; they are kept and must not be repeated.
+        public var interrupted = false
     }
 
     public func send(_ text: String) async throws -> TurnResult {
-        history.append(.user(text))
         trimHistory()
+        let turnStart = history.count
+        history.append(.user(text))
         var events: [AssistantEvent] = []
         var executedSignatures = Set<String>()
         for _ in 0..<maxRounds {
-            let system = ChatMessage.system(AssistantTools.systemPrompt(data: host.data(), now: now(), calendar: calendar, replyLanguage: replyLanguage))
-            let msg = try await transport.complete(messages: [system] + history, tools: AssistantTools.all)
+            let system = ChatMessage.system(AssistantTools.systemPrompt(data: host.data(), now: now(), calendar: calendar,
+                                                                        replyLanguage: replyLanguage, pending: pendingDescription()))
+            let msg: ChatMessage
+            do {
+                msg = try await transport.complete(messages: [system] + history, tools: AssistantTools.all)
+            } catch {
+                // Never leave a half-finished turn (tool calls without answers) in the history.
+                history.removeSubrange(turnStart...)
+                guard events.contains(where: { $0.isChange }) else { throw error }
+                // Changes were already made: keep them and record that in the history, so a retry
+                // of the same command is recognised instead of being executed twice.
+                history.append(.user(text))
+                history.append(.assistant("[Done before the connection dropped: " + changeLog(events) + ". Do not repeat these changes.]"))
+                return TurnResult(reply: "", events: events, interrupted: true)
+            }
             history.append(msg)
             guard let calls = msg.tool_calls, !calls.isEmpty else {
                 return TurnResult(reply: msg.content ?? "", events: events)
@@ -133,6 +173,16 @@ public final class AssistantEngine {
         do {
             switch name {
             case "add_transactions": return try addTransactions(a, data, &events)
+            case "revise_draft": return try reviseDraft(a, data, &events)
+            case "confirm_pending":
+                guard pending != nil else { return error("nothing is pending") }
+                let summary = try applyPending(&events)
+                return ["status": "done", "summary": .string(summary)]
+            case "cancel_pending":
+                guard let p = pending else { return error("nothing is pending") }
+                pending = nil
+                events.append(.resolved(id: p.id, confirmed: false))
+                return ["status": "cancelled"]
             case "add_transfer": return try addTransfer(a, data, &events)
             case "find_transactions": return findTransactions(a, data)
             case "update_transactions": return try updateTransactions(a, data, &events)
@@ -228,7 +278,10 @@ public final class AssistantEngine {
             // Validate on a copy first so we never ask the user to confirm something that would fail.
             var copy = host.data()
             do { try m.apply(to: &copy) } catch { return self.error("\(error)") }
-            events.append(.pending(PendingAction(mutation: m, summary: summary, reason: reason)))
+            if let old = pending { events.append(.resolved(id: old.id, confirmed: false)) }
+            let p = PendingAction(mutation: m, summary: summary, reason: reason)
+            pending = p
+            events.append(.pending(p))
             return ["status": reason == .possibleDuplicate ? "possible_duplicate" : "awaiting_user_confirmation", "summary": .string(summary)]
         }
         do {
@@ -365,32 +418,187 @@ public final class AssistantEngine {
 
     // MARK: Tools
 
-    func addTransactions(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
-        guard let items = a["items"]?.array, !items.isEmpty else { return error("items required") }
+    func notFoundCategoryText(_ n: String, _ data: AppData) -> String {
+        "Category '\(n)' not found. Expense: " + data.categories(of: .expense).map { $0.name }.joined(separator: ", ")
+            + ". Income: " + data.categories(of: .income).map { $0.name }.joined(separator: ", ")
+    }
+
+    /// Parses add_transactions items. Errors name the item, so the model asks about exactly that one.
+    func parseItems(_ items: [JSON], _ data: AppData, numberOffset: Int = 0) throws -> [Txn] {
         var txs: [Txn] = []
         for (i, item) in items.enumerated() {
-            guard let kind = item["kind"]?.text.flatMap(TxKind.init(rawValue:)) else { return error("item \(i + 1): kind must be expense or income") }
-            guard let catName = item["category"]?.text else { return error("item \(i + 1): category required") }
-            guard let cat = data.categoryNamed(catName, kind: kind) else { return notFoundCategory(catName, data) }
+            let n = i + 1 + numberOffset
+            guard let kind = item["kind"]?.text.flatMap(TxKind.init(rawValue:)) else { throw ToolError(message: "item \(n): kind must be expense or income") }
+            guard let catName = item["category"]?.text else { throw ToolError(message: "item \(n): category required") }
+            guard let cat = data.categoryNamed(catName, kind: kind) else { throw ToolError(message: "item \(n): " + notFoundCategoryText(catName, data)) }
             var wallet = data.defaultWallet
             if let wn = item["wallet"]?.text {
-                guard let w = data.walletNamed(wn) else { return error("wallet '\(wn)' not found; wallets: " + data.activeWallets.map { $0.name }.joined(separator: ", ")) }
+                guard let w = data.walletNamed(wn) else { throw ToolError(message: "item \(n): wallet '\(wn)' not found; wallets: " + data.activeWallets.map { $0.name }.joined(separator: ", ")) }
                 wallet = w
             }
-            guard let w = wallet else { return error("no wallet exists; create one first") }
+            guard let w = wallet else { throw ToolError(message: "no wallet exists; create one first") }
             let cur = (item["currency"]?.text ?? w.currency).uppercased()
             guard let amountText = item["amount"]?.text, let minor = MoneyMath.parseMinor(amountText, currency: cur), minor != 0 else {
-                return error("item \(i + 1): amount missing or invalid; ask the user")
+                throw ToolError(message: "item \(n): amount missing or invalid; ask the user")
             }
-            let date = try txDate(item["date"]?.text, item["time"]?.text)
+            guard let dateText = item["date"]?.text, !dateText.isEmpty else {
+                throw ToolError(message: "item \(n): the user did not state the date. Ask the user for which date (do not assume today); nothing was recorded.")
+            }
+            let date = try txDate(dateText, item["time"]?.text)
             txs.append(Txn(kind: kind, amountMinor: abs(minor), currency: cur, categoryID: cat.id, walletID: w.id,
                            date: date, note: item["note"]?.text ?? "", createdAt: now(), source: .ai,
                            labels: (item["labels"]?.array ?? []).compactMap { $0.text.flatMap { data.labelNamed($0)?.name } }))
         }
-        let summary = txs.map { describe($0, data) }.joined(separator: "; ")
-        let dupes = txs.flatMap { DuplicateCheck.suspects(for: $0, in: data, calendar: calendar, now: now()) }
-        return commit(.addTransactions(txs), summary: (txs.count > 1 ? "Added \(txs.count): " : "Added: ") + summary,
-                      needsConfirmation: dupes.isEmpty ? nil : .possibleDuplicate, &events)
+        return txs
+    }
+
+    /// One new operation is saved at once; several become a draft confirmed with one tap or one "да".
+    /// While a draft is pending, new items are appended to it.
+    func addTransactions(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
+        guard let items = a["items"]?.array, !items.isEmpty else { return error("items required") }
+        let draft = pending.flatMap { $0.isDraft && !$0.transactions.contains { $0.isTransfer } ? $0 : nil }
+        let existing = draft?.transactions ?? []
+        let all = existing + (try parseItems(items, data, numberOffset: existing.count))
+        if all.count == 1, DuplicateCheck.suspects(for: all[0], in: data, calendar: calendar, now: now()).isEmpty {
+            let line = describe(all[0], data)
+            try host.apply(.addTransactions(all), "Added: " + line)
+            events.append(.saved(all))
+            return ["status": "saved", "item": .string(line)]
+        }
+        return try setDraft(all, data, &events)
+    }
+
+    func numbered(_ txs: [Txn], _ data: AppData) -> [String] {
+        txs.enumerated().map { "\($0.offset + 1). " + describe($0.element, data) }
+    }
+
+    /// Stores (or replaces, keeping its id) the pending draft and describes it for the model.
+    func setDraft(_ txs: [Txn], _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
+        guard !txs.isEmpty else {
+            if let p = pending { pending = nil; events.append(.resolved(id: p.id, confirmed: false)) }
+            return ["status": "draft_empty", "message": "All items were removed; nothing will be saved."]
+        }
+        // Validate now, so the user's confirmation cannot fail later.
+        var copy = data
+        try Mutation.addTransactions(txs).apply(to: &copy)
+        let dupIdx = txs.indices.filter { !DuplicateCheck.suspects(for: txs[$0], in: data, calendar: calendar, now: now()).isEmpty }
+        var p = PendingAction(mutation: .addTransactions(txs), summary: "Draft: " + numbered(txs, data).joined(separator: "; "),
+                              reason: txs.count == 1 ? .possibleDuplicate : .batch, duplicateIndexes: dupIdx)
+        if let old = pending {
+            if old.isDraft { p.id = old.id } else { events.append(.resolved(id: old.id, confirmed: false)) }
+        }
+        pending = p
+        events.append(.pending(p))
+        let base = data.settings.baseCurrency
+        let tot = Analytics.totals(txs, data: data)
+        var r: [String: JSON] = [
+            "status": .string(txs.count == 1 ? "possible_duplicate" : "draft"),
+            "count": .number(Double(txs.count)),
+            "total_expense": .string(MoneyMath.plainString(tot.expense, currency: base) + " " + base),
+            "total_income": .string(MoneyMath.plainString(tot.income, currency: base) + " " + base),
+            "items": .array(numbered(txs, data).map { .string($0) }),
+            "next": "Ask the user to confirm in one short sentence; the list is shown on screen."
+        ]
+        if !dupIdx.isEmpty { r["possible_duplicates_of_saved"] = .array(dupIdx.map { .number(Double($0 + 1)) }) }
+        return .object(r)
+    }
+
+    func reviseDraft(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
+        guard let p = pending, p.isDraft else {
+            return error("no draft is pending; to change saved operations use find_transactions and update_transactions")
+        }
+        var txs = p.transactions
+        var removed = Set<Int>()
+        for ch in a["changes"]?.array ?? [] {
+            guard let n = ch["number"]?.int, n >= 1, n <= txs.count else { throw ToolError(message: "bad item number; the draft has \(txs.count) items") }
+            let i = n - 1
+            if ch["remove"]?.bool == true { removed.insert(i); continue }
+            var t = txs[i]
+            if let k = ch["kind"]?.text.flatMap(TxKind.init(rawValue:)) { t.kind = k }
+            if let wn = ch["wallet"]?.text {
+                guard let w = data.walletNamed(wn) else { throw ToolError(message: "wallet '\(wn)' not found") }
+                t.walletID = w.id
+            }
+            if let c = ch["currency"]?.text { t.currency = c.uppercased() }
+            if let am = ch["amount"]?.text {
+                guard let v = MoneyMath.parseMinor(am, currency: t.currency), v != 0 else { throw ToolError(message: "item \(n): bad amount") }
+                t.amountMinor = abs(v)
+            }
+            if let cn = ch["category"]?.text {
+                guard let c = data.categoryNamed(cn, kind: t.kind) else { throw ToolError(message: "item \(n): " + notFoundCategoryText(cn, data)) }
+                t.categoryID = c.id
+            } else if data.category(t.categoryID)?.kind != t.kind {
+                throw ToolError(message: "item \(n): the type changed, also give a \(t.kind.rawValue) category")
+            }
+            if let d = ch["date"]?.text { t.date = try txDate(d, ch["time"]?.text) }
+            if let note = ch["note"]?.string { t.note = note }
+            if let ls = ch["labels"]?.array { t.labels = ls.compactMap { $0.text.flatMap { data.labelNamed($0)?.name } } }
+            txs[i] = t
+        }
+        txs = txs.enumerated().filter { !removed.contains($0.offset) }.map { $0.element }
+        if let add = a["add"]?.array, !add.isEmpty { txs += try parseItems(add, data, numberOffset: txs.count) }
+        return try setDraft(txs, data, &events)
+    }
+
+    /// Saves the pending draft or performs the pending action. A second call finds nothing pending,
+    /// so a double tap or a repeated "да" can never save twice.
+    @discardableResult
+    func applyPending(_ events: inout [AssistantEvent]) throws -> String {
+        guard let p = pending else { return "" }
+        let label = p.isDraft ? "Added \(p.transactions.count)" : p.summary
+        try host.apply(p.mutation, label)
+        pending = nil
+        events.append(.resolved(id: p.id, confirmed: true))
+        if p.isDraft { events.append(.saved(p.transactions)) } else { events.append(.applied(summary: p.summary)) }
+        return p.isDraft ? "saved \(p.transactions.count) operation(s)" : p.summary
+    }
+
+    // MARK: Buttons in the app (the conversation learns about them too)
+
+    public func confirmPending() throws -> [AssistantEvent] {
+        var ev: [AssistantEvent] = []
+        guard pending != nil else { return ev }
+        let s = try applyPending(&ev)
+        history.append(.assistant("[The user confirmed with the button: \(s).]"))
+        return ev
+    }
+
+    public func cancelPending() -> [AssistantEvent] {
+        guard let p = pending else { return [] }
+        pending = nil
+        history.append(.assistant("[The user discarded the pending action with the button; nothing was saved.]"))
+        return [.resolved(id: p.id, confirmed: false)]
+    }
+
+    /// Removes one operation from the draft (the ✕ next to it).
+    public func removeDraftItem(at index: Int) throws -> [AssistantEvent] {
+        guard let p = pending, p.isDraft, p.transactions.indices.contains(index) else { return [] }
+        var txs = p.transactions
+        txs.remove(at: index)
+        var ev: [AssistantEvent] = []
+        _ = try setDraft(txs, host.data(), &ev)
+        return ev
+    }
+
+    func pendingDescription() -> String? {
+        guard let p = pending else { return nil }
+        if p.isDraft {
+            return "Draft of \(p.transactions.count) operation(s), numbered:\n" + numbered(p.transactions, host.data()).joined(separator: "\n")
+        }
+        return "Action needing confirmation (\(p.reason.rawValue)): \(p.summary)"
+    }
+
+    func changeLog(_ events: [AssistantEvent]) -> String {
+        let data = host.data()
+        return events.compactMap { e -> String? in
+            switch e {
+            case .saved(let t): return "saved \(t.count) operation(s): " + t.map { describe($0, data) }.joined(separator: "; ")
+            case .applied(let s): return s
+            case .undone(let s): return "undone: " + s
+            case .pending(let p): return "created a pending " + (p.isDraft ? "draft of \(p.transactions.count) operation(s)" : "action")
+            case .resolved(_, let ok): return ok ? "confirmed the pending action" : "discarded the pending action"
+            }
+        }.joined(separator: "; ")
     }
 
     func findTransactions(_ a: JSON, _ data: AppData) -> JSON {
