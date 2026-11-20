@@ -22,7 +22,6 @@ struct VoiceDock: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color.black.opacity(0.14), radius: 18, y: 6)
-        .accessibilityIdentifier("voice-dock")
         .sheet(item: $editing) { tx in AddTransactionView(editing: tx) }
     }
 
