@@ -245,7 +245,7 @@ struct EmptyStateView: View {
                 .font(.system(size: 30)).foregroundStyle(Palette.textTertiary)
             Text(filtered ? L("Ничего не найдено") : L("Пока нет операций за этот период"))
                 .font(.headline)
-            Text(L("Нажмите «+», чтобы добавить, или удерживайте «+», чтобы сказать голосом."))
+            Text(L("Нажмите «+», чтобы добавить вручную, или микрофон, чтобы сказать голосом."))
                 .font(.footnote).foregroundStyle(Palette.textSecondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)

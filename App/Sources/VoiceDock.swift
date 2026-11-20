@@ -157,7 +157,7 @@ struct VoiceDock: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.accent)
-                Text(Self.savedTitle(txs.count) + " · " + Fmt.code(total.expense + total.income, base).replacingOccurrences(of: "−", with: ""))
+                Text(Self.savedTitle(txs.count) + " · " + Self.amounts(total, base))
                     .font(.system(size: 15, weight: .semibold))
                     .accessibilityIdentifier("saved-title")
             }
@@ -204,6 +204,13 @@ struct VoiceDock: View {
         }
         .buttonStyle(PressableStyle(scale: 0.96))
         .accessibilityIdentifier(id)
+    }
+
+    /// "1 800 UAH" for expenses only, "+15 000 UAH" for income only, both when mixed.
+    static func amounts(_ t: Totals, _ base: String) -> String {
+        if t.income == 0 { return Fmt.code(t.expense, base) }
+        if t.expense == 0 { return Fmt.code(t.income, base, sign: true) }
+        return Fmt.code(-t.expense, base) + " · " + Fmt.code(t.income, base, sign: true)
     }
 
     /// "Сохранено 3 транзакции" with the right plural in uk/ru/en.
