@@ -115,7 +115,7 @@ public enum AssistantTools {
         let year = cal.component(.year, from: now)
         let nov3 = cal.date(from: DateComponents(year: year, month: 11, day: 3)) ?? now
         let example = ymd.string(from: nov3 > now ? (cal.date(byAdding: .year, value: -1, to: nov3) ?? nov3) : nov3)
-        let pendingBlock =pending.map { "\nPENDING (not saved yet, awaiting the user's answer):\n" + $0 } ?? ""
+        let pendingBlock = pending.map { "\nPENDING (not saved yet, awaiting the user's answer):\n" + $0 } ?? ""
         return """
         You are the assistant inside a personal finance iPhone app. You operate the app through tools; you are not a general chatbot.
         Now: \(df.string(from: now)) (\(cal.timeZone.identifier)). Week starts on Monday.
