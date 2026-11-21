@@ -82,8 +82,11 @@ final class GroshiUITests: XCTestCase {
         app.buttons["category-Бизнес"].tap()
         type("15000")
         app.buttons["save-button"].tap()
+        // Wait until the sheet has closed (the "+" rises above the toast meanwhile), then open it again.
+        XCTAssertTrue(waitFor { !self.app.buttons["save-button"].exists })
         // Transfer: listed, Cash Flow unchanged.
         app.buttons["add-button"].tap()
+        if !app.buttons["kind-transfer"].waitForExistence(timeout: 3) { app.buttons["add-button"].tap() }
         XCTAssertTrue(app.buttons["kind-transfer"].waitForExistence(timeout: 5))
         app.buttons["kind-transfer"].tap()
         type("500")
