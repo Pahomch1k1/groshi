@@ -42,6 +42,15 @@ export const scenarios = [
     expectTxs: ["2026-11-19|expense|1000|Games", "2026-11-19|expense|500|Taxi", "2026-11-19|expense|300|Food"],
   },
   {
+    // 0.5: a draft collected over several dictations (app switches in between), sent once.
+    name: "voice draft of three dictations: dates carry over until a new one",
+    turns: [{ user: "14 ноября ресторан 850 грн, продукты 320 грн, 15 ноября кофе 120 грн, такси 250 грн, вчера доставка еды 400", expect: { saved: 5, pending: 0 } }],
+    expectTxs: [
+      "2026-11-14|expense|850|Restaurant", "2026-11-14|expense|320|Food", "2026-11-15|expense|120|Cafe/Restaurant",
+      "2026-11-15|expense|250|Taxi", "2026-11-19|expense|400|Food/Restaurant/Cafe",
+    ],
+  },
+  {
     name: "seven operations over two days are saved at once",
     turns: [
       { user: "За 11 ноября добавь тысячу гривен на игры, 450 на пиццу, 300 в магазин, 1500 на бензин и 200 на такси. За 12 ноября добавь 800 гривен в ресторан и доход 15 тысяч за работу.", expect: { saved: 7, pending: 0 } },
