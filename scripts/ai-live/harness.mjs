@@ -264,6 +264,7 @@ for (const sc of scenarios) {
       rec.turns.push({ button: turn.button, expect: turn.expect });
       console.log(`  [button ${turn.button}]`);
     } else {
+      const savedBefore = S.txs.length;
       const r = await send(S, history, turn.user);
       rec.turns.push({ user: turn.user, responses: r.responses, expect: turn.expect });
       const calls = r.responses.flatMap((m) => (m.tool_calls || []).map((c) => c.function.name));
@@ -272,7 +273,14 @@ for (const sc of scenarios) {
       if (ex.saved != null && S.txs.length !== ex.saved) problems.push(`after "${turn.user.slice(0, 40)}": saved ${S.txs.length}, expected ${ex.saved}`);
       const pend = S.pending?.draft ? S.pending.txs.length : S.pending ? -1 : 0;
       if (ex.pending != null && pend !== ex.pending) problems.push(`after "${turn.user.slice(0, 40)}": pending ${pend}, expected ${ex.pending}`);
-      if (ex.asks && (calls.some((c) => c.startsWith("add_")) || !r.reply.trim())) problems.push(`after "${turn.user.slice(0, 40)}": expected a clarifying question, got "${r.reply}" [${calls}]`);
+      // A question, not a save: nothing new may be written (a repeat may go to the pending draft).
+      if (ex.asks && (S.txs.length !== savedBefore || !r.reply.trim())) problems.push(`after "${turn.user.slice(0, 40)}": expected a clarifying question, got "${r.reply}" [${calls}]`);
+      // 0.5: never "добавлено/сохранено" in a turn that wrote nothing (the Swift engine rejects it).
+      const said = " " + r.reply.toLowerCase().replace(/ё/g, "е") + " ";
+      const NEG = ["не добав", "не сохран", "не запис", "не внес", "не додан", "не додав", "не збереж", "не зберіг", "не занес", "ничего", "нічого", "nothing", "not saved", "not added", "wasn't", "were not", "was not"];
+      const CLAIM = ["добавлен", "добавил", "сохранен", "сохранил", "записал", "записан", "внесен", "внес ", "занес", "додано", "додав", "збережено", "зберіг", "записав", "записано", "внесено", "saved", "added", "recorded", "logged"];
+      const wrote = calls.some((n) => !["find_transactions", "summarize", "wallet_balances"].includes(n));
+      if (!wrote && !NEG.some((n) => said.includes(n)) && CLAIM.some((n) => said.includes(n))) problems.push(`after "${turn.user.slice(0, 40)}": claims a save without any change: "${r.reply}"`);
       if (ex.noCreateCategory && calls.includes("create_category")) problems.push("created a category on its own");
       for (const rule of ex.order || []) { const bad = checkOrder(rule, ofKind(S, "expense").map((c) => c.name), prevOrder); if (bad) problems.push(`after "${turn.user.slice(0, 40)}": ${bad}`); }
       prevOrder = ofKind(S, "expense").map((c) => c.name);
