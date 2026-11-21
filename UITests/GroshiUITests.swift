@@ -189,7 +189,12 @@ final class GroshiUITests: XCTestCase {
         shot("13-voice-recording")
         stop.tap()
         let title = app.staticTexts["saved-title"]
-        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        let appeared = title.waitForExistence(timeout: 10)
+        if !appeared {
+            shot("13b-after-send-failed")
+            print("HIERARCHY-AFTER-SEND:\n" + app.debugDescription)
+        }
+        XCTAssertTrue(appeared)
         XCTAssertTrue(title.label.contains("7"), title.label)
         XCTAssertFalse(app.buttons["pending-confirm"].exists, "no confirmation step")
         XCTAssertTrue(waitFor { self.rows.count >= 7 }, "rows: \(rows.count)")
@@ -222,6 +227,11 @@ final class GroshiUITests: XCTestCase {
         XCTAssertLessThan(food.frame.minX, transport.frame.minX)
         food.press(forDuration: 0.8, thenDragTo: transport)
         sleep(1)
+        // XCUITest sometimes fails to start the long-press inside a ScrollView: try once more, slower.
+        if food.frame.minX < transport.frame.minX {
+            food.press(forDuration: 1.5, thenDragTo: transport)
+            sleep(1)
+        }
         XCTAssertGreaterThan(food.frame.minX, transport.frame.minX, "Продукты moved after Транспорт")
         shot("16-category-dragged")
         app.buttons["add-close"].tap()
