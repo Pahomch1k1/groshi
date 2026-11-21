@@ -197,7 +197,12 @@ final class GroshiUITests: XCTestCase {
         XCTAssertTrue(appeared)
         XCTAssertTrue(title.label.contains("7"), title.label)
         XCTAssertFalse(app.buttons["pending-confirm"].exists, "no confirmation step")
-        XCTAssertTrue(waitFor { self.rows.count >= 7 }, "rows: \(rows.count)")
+        let listed = waitFor { self.rows.count >= 7 }
+        if !listed {
+            shot("14b-rows-missing")
+            print("HIERARCHY-ROWS-MISSING:\n" + app.debugDescription)
+        }
+        XCTAssertTrue(listed, "rows: \(rows.count)")
         sleep(1)
         shot("14-voice-saved")
 
