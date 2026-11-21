@@ -141,7 +141,9 @@ final class AssistantViewModel {
 
     /// Stops the microphone and keeps everything heard in the draft (also used when the app leaves
     /// the screen: iOS does not let a non-background app keep the microphone).
-    func pauseVoice() async {
+    /// `showDraft`: switch the panel to the draft (false when "Отправить" goes straight on to sending —
+    /// showing and removing the draft editor within one animation left SwiftUI on a stale panel).
+    func pauseVoice(showDraft: Bool = true) async {
         guard speech.isRecording || phase == .recording else { return }
         UITrace.log("pauseVoice start phase=\(phase)")
         let text = await speech.stop()
@@ -151,13 +153,13 @@ final class AssistantViewModel {
         d.updatedAt = Date()
         setDraft(d.isEmpty ? nil : d)
         recordingBase = draft?.text ?? ""
+        guard showDraft else { return }
         withAnimation(.snappy) { phase = hasDraft ? .draft : (lastReply.isEmpty && lastSavedID == nil ? .idle : .result) }
     }
 
     /// The stop button of the chat: stop and send the whole draft.
     func finishVoice() async {
         guard phase == .recording else { return }
-        await pauseVoice()
         await sendDraft()
     }
 
@@ -191,8 +193,12 @@ final class AssistantViewModel {
     /// "Отправить": the whole draft in one request.
     func sendDraft() async {
         UITrace.log("sendDraft recording=\(speech.isRecording) phase=\(phase)")
-        if speech.isRecording { await pauseVoice() }
-        guard let d = draft, !d.isEmpty else { UITrace.log("sendDraft: no draft"); return }
+        if speech.isRecording { await pauseVoice(showDraft: false) }
+        guard let d = draft, !d.isEmpty else {
+            UITrace.log("sendDraft: no draft")
+            withAnimation(.snappy) { phase = .idle }
+            return
+        }
         await send(d.text, requestID: d.requestID)
     }
 

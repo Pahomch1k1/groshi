@@ -21,6 +21,11 @@ struct VoiceDock: View {
             case .result: result
             }
         }
+        // Each phase is a new view, swapped with a plain fade: SwiftUI never diffs the old panel
+        // against the new one in the middle of an animation (it could leave "Обрабатываю…" on screen
+        // after the operations were already saved and the phase was "result").
+        .id(ai.phase)
+        .transition(.opacity)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
