@@ -16,6 +16,8 @@ struct CategoryGrid<Trailing: View>: View {
     @State private var dragging: UUID?
     @State private var dragPoint: CGPoint = .zero
     @State private var frames: [UUID: CGRect] = [:]
+    /// Rects of the grid positions when the drag started (they do not move while cells slide).
+    @State private var slots: [CGRect] = []
     @State private var lastDragEnd = Date.distantPast
     @GestureState private var holding = false
 
@@ -72,6 +74,7 @@ struct CategoryGrid<Trailing: View>: View {
             .onChanged { value in
                 guard case .second(true, let drag) = value else { return }
                 if dragging == nil {
+                    slots = CategoryOrder.ids(store.data, kind).map { frames[$0] ?? .null }
                     UITrace.log("drag start \(c.name) frames=\(frames.count) own=\(frames[c.id].map { "\($0)" } ?? "nil")")
                     order = CategoryOrder.ids(store.data, kind)
                     if let f = frames[c.id] { dragPoint = CGPoint(x: f.midX, y: f.midY) }
@@ -80,9 +83,9 @@ struct CategoryGrid<Trailing: View>: View {
                 }
                 guard let drag else { return }
                 dragPoint = drag.location
-                if let target = frames.first(where: { $0.key != c.id && order.contains($0.key) && $0.value.contains(drag.location) })?.key,
-                   let from = order.firstIndex(of: c.id), let to = order.firstIndex(of: target) {
-                    UITrace.log("drag over \(store.data.category(target)?.name ?? "?") at \(drag.location) \(from)→\(to)")
+                if let to = slots.firstIndex(where: { $0.contains(drag.location) }), to < order.count,
+                   let from = order.firstIndex(of: c.id), from != to {
+                    UITrace.log("drag over slot \(to) at \(drag.location) \(from)→\(to)")
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
                         order.remove(at: from)
                         order.insert(c.id, at: to)

@@ -25,7 +25,6 @@ struct VoiceDock: View {
         // against the new one in the middle of an animation (it could leave "Обрабатываю…" on screen
         // after the operations were already saved and the phase was "result").
         .id(ai.phase)
-        .transition(.opacity)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -96,9 +95,12 @@ struct VoiceDock: View {
     var recording: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Circle().fill(Palette.expense).frame(width: 8, height: 8)
-                    .opacity(0.9)
-                    .phaseAnimator([0.3, 1.0]) { v, p in v.opacity(p) } animation: { _ in .easeInOut(duration: 0.6) }
+                // Pulse computed from the clock (no endless SwiftUI animation that outlives the view).
+                TimelineView(.animation(minimumInterval: 1 / 15)) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    Circle().fill(Palette.expense).frame(width: 8, height: 8)
+                        .opacity(0.3 + 0.7 * (sin(t * 5) + 1) / 2)
+                }
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     Text(Self.elapsed(from: ai.speech.startedAt, to: ctx.date))
                         .font(.system(size: 15, weight: .semibold).monospacedDigit())

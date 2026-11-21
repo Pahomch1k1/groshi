@@ -76,11 +76,12 @@ struct RootView: View {
             // Rises above the "Added / Undo" toast so it is never covered by it.
             .padding(.bottom, store.toast == nil ? 72 : 128)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.toast == nil)
-            .scaleEffect(fabs ? 1 : 0.6)
             .opacity(fabs ? 1 : 0)
             .allowsHitTesting(fabs)
             .accessibilityHidden(!fabs)
-            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: fabs)
+            // Shown/hidden instantly: on CI an animation sometimes stopped on its first frame and left
+            // the AI button invisible (and the empty panel visible) although the state was right.
+            .transaction { $0.animation = nil }
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
@@ -91,7 +92,7 @@ struct RootView: View {
                     .opacity(dock ? 1 : 0)
                     .allowsHitTesting(dock)
                     .accessibilityHidden(!dock)
-                    .animation(.snappy, value: dock)
+                    .transaction { $0.animation = nil }
                 if let t = store.toast {
                     ToastView(toast: t).transition(.move(edge: .bottom).combined(with: .opacity))
                 }
