@@ -1,19 +1,23 @@
 import SwiftUI
 import GroshiCore
 
-/// Floating AI panel above the tab bar: recording (timer, wave, live text, ✕ and stop) →
-/// "thinking" → result (saved operations with "Исправить" / "Отменить", a question, or an error).
-/// No extra screens: one tap on the AI button starts recording, the stop button sends.
+/// Floating AI panel above the tab bar: recording (timer, wave, the draft growing live, "Пауза" /
+/// "Отправить") ⇄ draft (editable text, microphone to add more, "Отправить", delete) → "thinking" →
+/// result (saved operations with "Исправить" / "Отменить", a question, or an error).
+/// Nothing is sent until "Отправить"; the draft survives switching apps and restarts.
 struct VoiceDock: View {
     @Environment(Store.self) private var store
     @Environment(AssistantViewModel.self) private var ai
     @State private var editing: Txn?
+    @State private var confirmDelete = false
+    @FocusState private var draftFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             switch ai.phase {
             case .idle: EmptyView()
             case .recording: recording
+            case .draft: draftEditor
             case .thinking: thinking
             case .result: result
             }
@@ -23,6 +27,68 @@ struct VoiceDock: View {
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color.black.opacity(0.14), radius: 18, y: 6)
         .sheet(item: $editing) { tx in AddTransactionView(editing: tx) }
+        .confirmationDialog(L("Удалить черновик?"), isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button(L("Удалить черновик"), role: .destructive) { ai.deleteDraft() }
+            Button(L("Отмена"), role: .cancel) {}
+        } message: {
+            Text(L("Продиктованный текст будет удалён, операции не сохранятся."))
+        }
+    }
+
+    // MARK: Draft
+
+    var draftEditor: some View {
+        @Bindable var ai = ai
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.accent)
+                Text(L("Черновик")).font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Button { closeKeyboardAnd { ai.closePanel() } } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.textSecondary)
+                        .frame(width: 28, height: 28).background(Palette.bubble, in: Circle())
+                        .frame(width: 40, height: 40).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L("Свернуть"))
+                .accessibilityIdentifier("voice-close")
+            }
+            TextField(L("Продиктуйте операции"), text: $ai.draftText, axis: .vertical)
+                .font(.subheadline)
+                .lineLimit(2...8)
+                .focused($draftFocused)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(Palette.bubble, in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityIdentifier("voice-draft")
+            Text(L("Черновик сохраняется при переключении приложений. Нажмите микрофон, чтобы продолжить."))
+                .font(.caption).foregroundStyle(Palette.textSecondary)
+            if let e = ai.lastError {
+                Label(e, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(Palette.expense)
+                    .accessibilityIdentifier("voice-error")
+            }
+            HStack(spacing: 8) {
+                Button { draftFocused = false; confirmDelete = true } label: {
+                    Image(systemName: "trash").font(.system(size: 15, weight: .medium))
+                        .frame(width: 44, height: 42).background(Palette.bubble, in: Capsule())
+                }
+                .buttonStyle(PressableStyle(scale: 0.95))
+                .foregroundStyle(Palette.expense)
+                .accessibilityLabel(L("Удалить черновик"))
+                .accessibilityIdentifier("draft-delete")
+                bigButton(L("Продолжить"), icon: "mic.fill", id: "draft-mic", primary: false) {
+                    closeKeyboardAnd { Task { await ai.startVoice() } }
+                }
+                bigButton(L("Отправить"), icon: "arrow.up", id: "draft-send", primary: true) {
+                    closeKeyboardAnd { Task { await ai.sendDraft() } }
+                }
+                .disabled(!ai.hasDraft)
+            }
+        }
+    }
+
+    func closeKeyboardAnd(_ action: @escaping () -> Void) {
+        draftFocused = false
+        action()
     }
 
     // MARK: Recording
@@ -41,32 +107,38 @@ struct VoiceDock: View {
                 WaveBars(level: ai.speech.level)
                 Spacer()
             }
-            Text(ai.speech.transcript.isEmpty ? L("Говорите — паузы не прерывают запись") : ai.speech.transcript)
-                .font(.subheadline)
-                .foregroundStyle(ai.speech.transcript.isEmpty ? Palette.textSecondary : Color.primary)
-                .lineLimit(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(.easeOut(duration: 0.15), value: ai.speech.transcript)
-                .accessibilityIdentifier("voice-transcript")
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(ai.draftText.isEmpty ? L("Говорите — паузы не прерывают запись") : ai.draftText)
+                        .font(.subheadline)
+                        .foregroundStyle(ai.draftText.isEmpty ? Palette.textSecondary : Color.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("voice-transcript")
+                    Color.clear.frame(height: 1).id("end")
+                }
+                .frame(maxHeight: 150)
+                .fixedSize(horizontal: false, vertical: true)
+                .onChange(of: ai.draftText) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            }
             HStack(spacing: 10) {
-                Button { ai.cancelVoice() } label: {
-                    Label(L("Отмена"), systemImage: "xmark")
+                Button { Task { await ai.pauseVoice() } } label: {
+                    Label(L("Пауза"), systemImage: "pause.fill")
                         .font(.system(size: 15, weight: .medium))
                         .frame(height: 44).padding(.horizontal, 16)
                         .background(Palette.bubble, in: Capsule())
                 }
                 .buttonStyle(PressableStyle(scale: 0.95))
                 .foregroundStyle(Color.primary)
-                .accessibilityIdentifier("voice-cancel")
-                Button { Task { await ai.finishVoice() } } label: {
-                    Label(L("Готово"), systemImage: "stop.fill")
+                .accessibilityIdentifier("voice-pause")
+                Button { Task { await ai.sendDraft() } } label: {
+                    Label(L("Отправить"), systemImage: "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity).frame(height: 44)
                         .background(Palette.accent, in: Capsule())
                 }
                 .buttonStyle(PressableStyle(scale: 0.97))
-                .accessibilityIdentifier("voice-stop")
+                .accessibilityIdentifier("voice-send")
             }
         }
     }
@@ -100,6 +172,14 @@ struct VoiceDock: View {
                     Label(e, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(Palette.expense)
                 } else if let saved = ai.lastSaved, saved.resolved == nil {
                     savedCard(saved)
+                    if ai.lastNotSaved > 0 {
+                        Label(L("Не добавлено") + ": \(ai.lastNotSaved)", systemImage: "exclamationmark.circle.fill")
+                            .font(.footnote.weight(.semibold)).foregroundStyle(.orange)
+                            .accessibilityIdentifier("saved-not-all")
+                    }
+                    if (ai.lastNotSaved > 0 || ai.pending != nil) && !ai.lastReply.isEmpty {
+                        Text(ai.lastReply).font(.footnote).accessibilityIdentifier("voice-reply")
+                    }
                 } else if let saved = ai.lastSaved, let r = saved.resolved {
                     Label(r, systemImage: "arrow.uturn.backward.circle.fill").font(.subheadline).foregroundStyle(.orange)
                     if !ai.lastReply.isEmpty { Text(ai.lastReply).font(.footnote).foregroundStyle(Palette.textSecondary) }
@@ -139,10 +219,18 @@ struct VoiceDock: View {
         } else {
             HStack(spacing: 8) {
                 if let e = ai.lastError, let c = ai.lastCommand, !e.isEmpty {
-                    bigButton(L("Повторить"), icon: "arrow.clockwise", id: "voice-retry", primary: false) { Task { await ai.send(c) } }
-                }
-                bigButton(ai.lastReply.hasSuffix("?") ? L("Ответить") : L("Ещё команда"), icon: "mic.fill", id: "voice-answer", primary: true) {
-                    Task { await ai.startVoice() }
+                    bigButton(L("Повторить"), icon: "arrow.clockwise", id: "voice-retry", primary: true) {
+                        Task { if ai.hasDraft { await ai.sendDraft() } else { await ai.send(c) } }
+                    }
+                    if ai.hasDraft {
+                        bigButton(L("Черновик"), icon: "pencil", id: "voice-edit-draft", primary: false) {
+                            withAnimation(.snappy) { ai.phase = .draft }
+                        }
+                    }
+                } else {
+                    bigButton(ai.lastReply.hasSuffix("?") ? L("Ответить") : L("Ещё команда"), icon: "mic.fill", id: "voice-answer", primary: true) {
+                        Task { await ai.startVoice() }
+                    }
                 }
                 bigButton(L("Чат"), icon: "bubble.left.and.bubble.right", id: "voice-chat", primary: false) { ai.openSheet() }
             }
@@ -157,7 +245,7 @@ struct VoiceDock: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.accent)
-                Text(Self.savedTitle(txs.count) + " · " + Self.amounts(total, base))
+                Text(Self.savedTitle(txs.count) + " " + L("на сумму") + " " + Self.amounts(total, base))
                     .font(.system(size: 15, weight: .semibold))
                     .accessibilityIdentifier("saved-title")
             }
@@ -213,15 +301,15 @@ struct VoiceDock: View {
         return Fmt.code(-t.expense, base) + " · " + Fmt.code(t.income, base, sign: true)
     }
 
-    /// "Сохранено 3 транзакции" with the right plural in uk/ru/en.
+    /// "Добавлено 3 транзакции" with the right plural in uk/ru/en.
     static func savedTitle(_ n: Int) -> String {
         let m10 = n % 10, m100 = n % 100
         let few = (2...4).contains(m10) && !(12...14).contains(m100)
         let one = m10 == 1 && m100 != 11
         switch Lang.effective {
-        case .en: return "Saved \(n) transaction" + (n == 1 ? "" : "s")
-        case .uk: return "Збережено \(n) " + (one ? "транзакцію" : few ? "транзакції" : "транзакцій")
-        default: return "Сохранено \(n) " + (one ? "транзакция" : few ? "транзакции" : "транзакций")
+        case .en: return "Added \(n) transaction" + (n == 1 ? "" : "s")
+        case .uk: return "Додано \(n) " + (one ? "транзакцію" : few ? "транзакції" : "транзакцій")
+        default: return "Добавлено \(n) " + (one ? "транзакция" : few ? "транзакции" : "транзакций")
         }
     }
 }
@@ -248,6 +336,7 @@ struct WaveBars: View {
 /// The green AI button: a microphone with a small sparkles badge.
 struct AIFab: View {
     var recording: Bool
+    var hasDraft = false
     var size: CGFloat = 52
     var action: () -> Void
     var body: some View {
@@ -266,9 +355,19 @@ struct AIFab: View {
                     .background(Color.white, in: Circle())
                     .overlay(Circle().stroke(Palette.accent.opacity(0.25), lineWidth: 1))
                     .offset(x: 3, y: -3)
+                if hasDraft {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Color.orange, in: Circle())
+                        .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                        .offset(x: -size + 18, y: -3)
+                        .accessibilityIdentifier("ai-draft-badge")
+                }
             }
         }
         .buttonStyle(PressableStyle(scale: 0.9))
-        .accessibilityLabel(L("AI: голосовая команда"))
+        .accessibilityLabel(hasDraft ? L("AI: продолжить черновик") : L("AI: голосовая команда"))
     }
 }

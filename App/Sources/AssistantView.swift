@@ -14,10 +14,13 @@ final class AssistantViewModel {
         var resolved: String? = nil
         /// For errors: the command to send again (safe: a failed turn leaves nothing behind).
         var retry: String? = nil
+        /// Its request id: a retry is the same submission, so nothing can be saved twice.
+        var retryID: String? = nil
     }
 
     /// The floating voice panel on the main screen.
-    enum Phase: Equatable { case idle, recording, thinking, result }
+    /// `draft`: the unsent dictated text, editable; the microphone adds to it, "Отправить" sends it.
+    enum Phase: Equatable { case idle, recording, draft, thinking, result }
 
     var messages: [Message] = []
     var input = ""
@@ -31,12 +34,20 @@ final class AssistantViewModel {
     var lastReply = ""
     var lastError: String?
     var lastCommand: String?
+    /// Items of the latest command that were not saved (the AI asks about them).
+    var lastNotSaved = 0
     /// Message (in `messages`) holding the operations saved by the latest command.
     var lastSavedID: UUID?
     var correcting = false
     let speech = SpeechRecognizer()
     let store: Store
     @ObservationIgnored private var engine: AssistantEngine!
+
+    /// The unsent voice text. Kept on disk on every change (see `VoiceDraftStore`), so switching to
+    /// another app, iOS stopping the microphone, closing the panel or a restart never loses it.
+    private(set) var draft: VoiceDraft?
+    /// Draft text before the current recording; the recording is appended to it.
+    @ObservationIgnored private var recordingBase = ""
 
     init(store: Store) {
         self.store = store
@@ -47,6 +58,10 @@ final class AssistantViewModel {
             undo: { [unowned store] in store.undo() },
             isValidSymbol: { UIImage(systemName: $0) != nil })
         engine = AssistantEngine(transport: transport, host: host, calendar: store.calendar, replyLanguage: Lang.aiReplyLanguage)
+        draft = store.draftStore.load()
+        if draft != nil { phase = .draft } // restored after a restart: shown at once
+        speech.onTranscript = { [weak self] text in self?.recognised(text) }
+        speech.onInterrupted = { [weak self] in Task { await self?.pauseVoice() } }
     }
 
     /// Works out of the box through the WorkFlow Spend server; no key setup needed.
@@ -55,61 +70,148 @@ final class AssistantViewModel {
 
     var lastSaved: Message? { messages.first { $0.id == lastSavedID } }
 
+    var hasDraft: Bool { !(draft?.isEmpty ?? true) }
+
+    /// The text field of the draft (editable while not recording).
+    var draftText: String {
+        get { draft?.text ?? "" }
+        set {
+            var d = draft ?? VoiceDraft()
+            d.text = newValue
+            d.updatedAt = Date()
+            setDraft(d)
+        }
+    }
+
+    private func setDraft(_ d: VoiceDraft?) {
+        draft = d
+        do { try store.draftStore.save(d) } catch {
+            store.show(L("Ошибка сохранения: ") + error.localizedDescription, canUndo: false, isError: true)
+        }
+    }
+
+    /// The draft is removed only by an explicit delete or after its operations were saved.
+    private func clearDraft() {
+        recordingBase = ""
+        draft = nil
+        store.draftStore.clear()
+    }
+
     func openSheet(context: String? = nil) {
         self.context = context
         sheetVisible = true
     }
 
     func newChat() {
-        speech.cancel()
+        if speech.isRecording { Task { await pauseVoice() } }
         engine.reset()
-        withAnimation(.snappy) { messages = []; pending = nil; phase = .idle; lastSavedID = nil }
+        withAnimation(.snappy) {
+            messages = []; pending = nil; lastSavedID = nil
+            phase = hasDraft ? .draft : .idle
+        }
     }
 
-    // MARK: Voice (one tap starts, the stop button sends, ✕ cancels)
+    // MARK: Voice draft (the microphone adds text, nothing is sent until "Отправить")
 
     func startVoice(context: String? = nil) async {
         guard phase != .recording, !busy else { return }
         if let context { self.context = context }
         Haptics.tap(enabled: store.data.settings.haptics)
         lastError = nil
+        if draft == nil { setDraft(VoiceDraft()) }
+        recordingBase = draft?.text ?? ""
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { phase = .recording; correcting = false }
-        await speech.start(locale: settings.voiceLocale)
+        await speech.start(locale: settings.voiceLocale, after: recordingBase)
         if let e = speech.error {
             lastError = e
-            withAnimation { phase = .result }
+            withAnimation { phase = hasDraft ? .draft : .result }
         }
     }
 
+    /// Every partial result goes straight into the draft on disk.
+    private func recognised(_ text: String) {
+        guard phase == .recording || speech.isRecording else { return }
+        var d = draft ?? VoiceDraft()
+        d.text = VoiceDraft.joined(recordingBase, text)
+        d.updatedAt = Date()
+        setDraft(d)
+    }
+
+    /// Stops the microphone and keeps everything heard in the draft (also used when the app leaves
+    /// the screen: iOS does not let a non-background app keep the microphone).
+    func pauseVoice() async {
+        guard speech.isRecording || phase == .recording else { return }
+        let text = await speech.stop()
+        var d = draft ?? VoiceDraft()
+        d.text = VoiceDraft.joined(recordingBase, text)
+        d.updatedAt = Date()
+        setDraft(d.isEmpty ? nil : d)
+        recordingBase = draft?.text ?? ""
+        withAnimation(.snappy) { phase = hasDraft ? .draft : (lastReply.isEmpty && lastSavedID == nil ? .idle : .result) }
+    }
+
+    /// The stop button of the chat: stop and send the whole draft.
     func finishVoice() async {
         guard phase == .recording else { return }
-        let text = await speech.stop()
-        guard !text.isEmpty else {
-            withAnimation { phase = lastReply.isEmpty && lastSavedID == nil ? .idle : .result }
-            return
-        }
-        await send(text)
+        await pauseVoice()
+        await sendDraft()
     }
 
-    func cancelVoice() {
+    /// The app goes to the background (another app, Telegram, the home screen).
+    func appWillLeave() async {
+        guard speech.isRecording else { return }
+        let task = BackgroundTask("voice-draft")
+        await pauseVoice()
+        task.end()
+    }
+
+    /// Explicit delete of the draft (after a confirmation in the panel).
+    func deleteDraft() {
         speech.cancel()
+        clearDraft()
         context = nil
         withAnimation(.snappy) { phase = .idle }
     }
 
+    /// The ✕ of the panel: hides it; a draft is kept (the AI button shows it is there).
     func closePanel() {
-        if speech.isRecording { speech.cancel() }
+        if speech.isRecording { Task { await pauseVoice(); withAnimation(.snappy) { phase = .idle } } }
         withAnimation(.snappy) { phase = .idle; correcting = false }
+    }
+
+    /// The AI button: continue the draft if there is one (recording adds to it), otherwise start one.
+    func aiButton() async {
+        await startVoice()
+    }
+
+    /// "Отправить": the whole draft in one request.
+    func sendDraft() async {
+        if speech.isRecording { await pauseVoice() }
+        guard let d = draft, !d.isEmpty else { return }
+        await send(d.text, requestID: d.requestID)
+    }
+
+    /// An error message's "Повторить" in the chat.
+    func resend(_ m: Message) async {
+        guard let text = m.retry else { return }
+        if let id = m.retryID, let d = draft, d.requestID == id { await sendDraft(); return }
+        await send(text, requestID: m.retryID)
     }
 
     // MARK: Conversation
 
-    func send(_ textOverride: String? = nil) async {
+    /// Sends a command. A draft (`requestID` = the draft's) is cleared only after the command was
+    /// processed without an error; on an error it stays for "Повторить" with the same request id,
+    /// so the operations can never be saved twice.
+    func send(_ textOverride: String? = nil, requestID: String? = nil) async {
         let text = (textOverride ?? input).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
-        input = ""
+        let fromDraft = requestID != nil && requestID == draft?.requestID
+        let rid = requestID ?? UUID().uuidString
+        if textOverride == nil { input = "" }
         lastCommand = text
         lastError = nil
+        lastNotSaved = 0
         withAnimation(.snappy) {
             messages.append(Message(role: .user, text: text))
             phase = .thinking
@@ -120,11 +222,38 @@ final class AssistantViewModel {
         engine.replyLanguage = Lang.aiReplyLanguage
         var prompt = text
         if let c = context { prompt = "[Context: \(c)]\n" + text; context = nil }
+        // Finish the request even if the user switches to another app right after "Отправить".
+        let bg = BackgroundTask("ai-send")
+        defer { bg.end() }
         do {
-            let r = try await engine.send(prompt)
+            let r = try await engine.send(prompt, requestID: rid)
             busy = false
             handle(r.events)
-            let reply = r.interrupted ? L("Связь прервалась, но изменения уже сохранены — повторять команду не нужно.") : r.reply
+            lastNotSaved = r.notSaved.count
+            if r.unverifiedClaim {
+                // The model said "added" but nothing was written: never show that as a success.
+                let e = L("AI ответил, что сохранил, но ни одна операция не записана. Текст остался в черновике — отправьте ещё раз.")
+                withAnimation {
+                    lastError = e; lastReply = ""
+                    messages.append(Message(role: .error, text: e, retry: text, retryID: rid))
+                    phase = .result
+                }
+                Haptics.error(enabled: store.data.settings.haptics)
+                return
+            }
+            let reply: String
+            if r.alreadySaved {
+                reply = L("Эти операции уже были сохранены — повторно не добавлены.")
+            } else if r.interrupted {
+                reply = L("Связь прервалась, но изменения уже сохранены — повторять команду не нужно.")
+            } else {
+                reply = r.reply
+            }
+            // The draft is done once something was saved, or when the AI answered without asking back.
+            // A clarifying question keeps it: the answer is dictated into the same draft and sent whole.
+            if fromDraft && (r.savedSomething || !reply.trimmingCharacters(in: .whitespaces).hasSuffix("?")) {
+                clearDraft()
+            }
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                 lastReply = reply
                 if !reply.isEmpty { messages.append(Message(role: .assistant, text: reply)) }
@@ -132,14 +261,27 @@ final class AssistantViewModel {
             }
         } catch {
             busy = false
+            let e = Self.describe(error) + (fromDraft ? " " + L("Текст сохранён в черновике.") : "")
             withAnimation {
-                lastError = error.localizedDescription
+                lastError = e
                 lastReply = ""
-                messages.append(Message(role: .error, text: error.localizedDescription, retry: text))
+                messages.append(Message(role: .error, text: e, retry: text, retryID: rid))
                 phase = .result
             }
             Haptics.error(enabled: store.data.settings.haptics)
         }
+    }
+
+    static func describe(_ error: Error) -> String {
+        if let u = error as? URLError {
+            switch u.code {
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
+                return L("Нет связи с интернетом — ничего не сохранено.")
+            case .timedOut: return L("Сервер AI не ответил вовремя — ничего не сохранено.")
+            default: break
+            }
+        }
+        return error.localizedDescription
     }
 
     func handle(_ events: [AssistantEvent]) {
@@ -159,6 +301,9 @@ final class AssistantViewModel {
                 messages.append(m)
                 lastSavedID = m.id
             } else if events.contains(where: { if case .undone = $0 { return true }; return false }) {
+                lastSavedID = nil
+            } else if !events.isEmpty || phase == .thinking {
+                // A new command without saves must not show the previous command's card.
                 lastSavedID = nil
             }
         }
@@ -506,8 +651,8 @@ struct MessageView: View {
                 Label(message.text, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(Palette.expense)
                 Spacer()
-                if let r = message.retry {
-                    Button(L("Повторить")) { Task { await vm.send(r) } }.font(.caption.weight(.semibold))
+                if message.retry != nil {
+                    Button(L("Повторить")) { Task { await vm.resend(message) } }.font(.caption.weight(.semibold))
                 }
             }
         case .saved, .undone:

@@ -100,6 +100,10 @@ public struct Txn: Codable, Identifiable, Hashable {
     public var excluded: Bool?
     /// The recurring rule that produced this transaction, if any.
     public var recurringID: UUID?
+    // Added in 0.5 (optional for compatibility).
+    /// Id of the AI submission (one voice draft) that created it: a repeated send of the same draft
+    /// finds the operations already saved instead of creating them twice.
+    public var requestID: String?
 
     /// Category placeholder used by transfers (they have no category).
     public static let noCategory = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!

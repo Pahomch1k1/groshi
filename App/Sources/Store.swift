@@ -18,6 +18,8 @@ final class Store {
     var toast: Toast?
     var startupNotice: String?
     let fileStore: FileStore
+    /// The unsent AI voice draft (survives app switches and restarts).
+    let draftStore: VoiceDraftStore
     let iconsDirectory: URL
 
     // UI state shared between tabs
@@ -32,10 +34,12 @@ final class Store {
         iconsDirectory = base.appendingPathComponent("Icons", isDirectory: true)
         try? FileManager.default.createDirectory(at: iconsDirectory, withIntermediateDirectories: true)
 
+        draftStore = VoiceDraftStore(directory: base)
         let isUITest = ProcessInfo.processInfo.arguments.contains("-uiTestReset")
         if isUITest {
             try? FileManager.default.removeItem(at: fileStore.dataURL)
             for f in fileStore.snapshotFiles() { try? FileManager.default.removeItem(at: f) }
+            draftStore.clear()
         }
 
         var loaded: AppData
@@ -58,6 +62,11 @@ final class Store {
         startupNotice = notice
         period = Period.containing(Date(), kind: .month, calendar: cal)
         if fresh || created > 0 { persist() }
+        // One full copy into Files › Backups before the first launch of 0.5 (the owner's data is untouched).
+        let flag = "backup-before-0.5"
+        if !fresh && !isUITest && !UserDefaults.standard.bool(forKey: flag) {
+            if (try? autoBackup(reason: "update-0.5")) != nil { UserDefaults.standard.set(true, forKey: flag) }
+        }
     }
 
     var calendar: Calendar { Period.calendar(firstWeekday: data.settings.firstWeekday) }
@@ -91,17 +100,21 @@ final class Store {
 
     // MARK: Changes
 
-    /// Applies a change, saves, and records undo. Throws on validation errors.
+    /// Applies a change, saves, and records undo. Throws on validation errors and when the file could
+    /// not be written — then nothing changes, so a caller (the AI too) never reports an unsaved change.
+    /// The screen updates in the same step: every list reads `data`.
     func apply(_ m: Mutation, label: String, undoable: Bool = true) throws {
         var copy = data
         try m.apply(to: &copy)
+        do { try fileStore.save(copy) } catch {
+            throw AIError(message: L("Ошибка сохранения: ") + error.localizedDescription)
+        }
         if undoable {
             undoStack.append((label, data))
             if undoStack.count > 40 { undoStack.removeFirst(undoStack.count - 40) }
         }
         withAnimation(.snappy) { data = copy }
         Lang.current = data.settings.language
-        persist()
     }
 
     /// UI helper: apply and show a toast (with Undo) or an error.

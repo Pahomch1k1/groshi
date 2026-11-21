@@ -149,8 +149,13 @@ enum Gateway {
 @MainActor
 @Observable
 final class SpeechRecognizer {
-    var transcript = ""
+    var transcript = "" { didSet { if transcript != oldValue { onTranscript?(transcript) } } }
     var isRecording = false
+    /// Called on every change of the recognised text, so the draft on disk is always current.
+    @ObservationIgnored var onTranscript: ((String) -> Void)?
+    /// iOS took the microphone away (another app, a call, Telegram/the app went to the background).
+    @ObservationIgnored var onInterrupted: (() -> Void)?
+    @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
     var level: Float = 0
     var error: String?
     var startedAt = Date()
@@ -169,17 +174,25 @@ final class SpeechRecognizer {
     private var stopping = false
     private var scripted: Task<Void, Never>?
 
-    /// UI tests: no microphone on the simulator, the "speech" is typed in slowly.
-    static var scriptedText: String? {
-        ScriptedTransport.isOn ? "За вчера тысяча на развлечения, 450 на пиццу, 300 продукты, 1500 бензин, 200 такси, сегодня 800 ресторан и зарплата 15 тысяч" : nil
+    /// UI tests: no microphone on the simulator, the "speech" is typed in slowly — one phrase per
+    /// recording, the first one not yet in the draft (so a dictation continued after switching apps
+    /// adds the next phrase).
+    static let scriptedPhrases = [
+        "За вчера тысяча на развлечения, 450 на пиццу, 300 продукты",
+        "1500 бензин, 200 такси",
+        "сегодня 800 ресторан и зарплата 15 тысяч"
+    ]
+    static func scriptedText(after draft: String) -> String? {
+        guard ScriptedTransport.isOn else { return nil }
+        return scriptedPhrases.first { !draft.contains(VoiceDraft.tidy($0)) } ?? scriptedPhrases[0]
     }
 
-    func start(locale: String) async {
+    func start(locale: String, after draft: String = "") async {
         guard !isRecording else { return }
         error = nil
         transcript = ""; committed = ""; current = ""
         stopping = false
-        if let text = Self.scriptedText {
+        if let text = Self.scriptedText(after: draft) {
             isRecording = true
             startedAt = Date()
             scripted = Task { @MainActor in
@@ -218,6 +231,7 @@ final class SpeechRecognizer {
             }
             audio.prepare()
             try audio.start()
+            observeInterruptions()
             isRecording = true
             startedAt = Date()
             startSegment()
@@ -288,7 +302,23 @@ final class SpeechRecognizer {
         transcript = ""
     }
 
+    /// The system stops the microphone when the app leaves the screen or a call comes in; the text
+    /// heard so far is kept by the owner of the draft.
+    private func observeInterruptions() {
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            guard raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:)) == .began else { return }
+            Task { @MainActor in
+                guard let self, self.isRecording else { return }
+                self.onInterrupted?()
+            }
+        }
+    }
+
     private func teardown() {
+        if let o = interruptionObserver { NotificationCenter.default.removeObserver(o); interruptionObserver = nil }
         if audio.isRunning { audio.stop() }
         audio.inputNode.removeTap(onBus: 0)
         task?.cancel()
@@ -324,9 +354,15 @@ enum AudioSession {
 /// real model did in the live tests — one add_transactions call with seven items, then a short question.
 final class ScriptedTransport: LLMTransport {
     static var isOn: Bool { ProcessInfo.processInfo.arguments.contains("-uiTestAI") }
+    /// -uiTestAIOffline: the first request fails like a lost mobile connection (nothing is saved).
+    private var failNext = ProcessInfo.processInfo.arguments.contains("-uiTestAIOffline")
 
     func complete(messages: [ChatMessage], tools: [JSON]) async throws -> ChatMessage {
         try await Task.sleep(for: .milliseconds(300))
+        if failNext {
+            failNext = false
+            throw URLError(.notConnectedToInternet)
+        }
         if messages.last?.role == "tool" { return .assistant("Сохранено 7 операций.") }
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
@@ -341,5 +377,24 @@ final class ScriptedTransport: LLMTransport {
         let json = items.map { "{\"kind\":\"\($0.0)\",\"amount\":\"\($0.1)\",\"category\":\"\($0.2)\",\"date\":\"\($0.3)\"}" }.joined(separator: ",")
         return ChatMessage(role: "assistant", content: nil,
                            tool_calls: [ChatToolCall(id: "call_ui_\(messages.count)", name: "add_transactions", arguments: "{\"items\":[\(json)]}")])
+    }
+}
+
+/// A little extra time from iOS to finish an AI request or to save the draft after the app leaves
+/// the screen (switching to another app right after "Отправить" must not lose the answer).
+@MainActor
+final class BackgroundTask {
+    private var id: UIBackgroundTaskIdentifier = .invalid
+
+    init(_ name: String) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: { [weak self] in
+            MainActor.assumeIsolated { self?.end() }
+        })
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

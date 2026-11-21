@@ -51,7 +51,8 @@ public final class FileStore {
     public func save(_ appData: AppData) throws {
         let data = try FileStore.encoder().encode(appData)
         try data.write(to: dataURL, options: [.atomic])
-        try snapshotIfNeeded(data)
+        // The main file is what counts; a failed daily snapshot must not report the save as failed.
+        try? snapshotIfNeeded(data)
     }
 
     /// One snapshot per day; older ones pruned.

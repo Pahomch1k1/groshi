@@ -165,17 +165,23 @@ final class GroshiUITests: XCTestCase {
         XCTAssertGreaterThan(aiButton.frame.minY, add.frame.maxY, "AI button is below +")
         shot("12-two-buttons")
 
-        // Cancel: nothing is sent.
+        // Pause keeps the text as a draft; only an explicit delete removes it; nothing is sent.
         aiButton.tap()
-        XCTAssertTrue(app.buttons["voice-cancel"].waitForExistence(timeout: 5))
-        app.buttons["voice-cancel"].tap()
-        XCTAssertTrue(waitFor { !self.app.buttons["voice-stop"].exists })
+        XCTAssertTrue(app.buttons["voice-pause"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitFor(timeout: 10) { self.app.staticTexts["voice-transcript"].label.contains("развлечения") })
+        app.buttons["voice-pause"].tap()
+        XCTAssertTrue(app.buttons["draft-delete"].waitForExistence(timeout: 5))
+        app.buttons["draft-delete"].tap()
+        let confirm = app.sheets.buttons["Удалить черновик"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
         XCTAssertTrue(aiButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["ai-draft-badge"].exists)
         XCTAssertEqual(rows.count, 0)
 
         // Record with a long pause: still recording after 5 s.
         aiButton.tap()
-        let stop = app.buttons["voice-stop"]
+        let stop = app.buttons["voice-send"]
         XCTAssertTrue(stop.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["voice-timer"].exists)
         sleep(5)
@@ -236,6 +242,84 @@ final class GroshiUITests: XCTestCase {
         add.tap()
         XCTAssertTrue(food.waitForExistence(timeout: 5))
         XCTAssertGreaterThan(food.frame.minX, transport.frame.minX, "order survives a restart")
+    }
+
+    /// The owner's real flow: dictate, go to another app (the bank), come back, dictate more —
+    /// several times — and send once at the end. The text is never lost: not when the app leaves the
+    /// screen mid-recording, not after a restart. A lost connection saves nothing and keeps the draft;
+    /// "Повторить" saves every operation exactly once and the draft is cleared only then.
+    func testVoiceDraftSurvivesAppSwitchRestartAndOffline() {
+        app.launchArguments += ["-uiTestAI", "-uiTestAIOffline"]
+        app.launch()
+        let aiButton = app.buttons["ai-button"]
+        XCTAssertTrue(aiButton.waitForExistence(timeout: 10))
+        let transcript = app.staticTexts["voice-transcript"]
+        let draft = app.descendants(matching: .any)["voice-draft"]
+        func draftText() -> String { (draft.value as? String) ?? "" }
+
+        // 1. First phrase, then pause.
+        aiButton.tap()
+        XCTAssertTrue(waitFor(timeout: 10) { transcript.label.contains("300 продукты") }, transcript.label)
+        app.buttons["voice-pause"].tap()
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        XCTAssertTrue(draftText().contains("развлечения"), draftText())
+
+        // 2. To another app and back: the draft is still there.
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.activate()
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        XCTAssertTrue(draftText().contains("300 продукты"), draftText())
+        shot("18-draft-after-switch")
+
+        // 3. Continue: the second phrase is ADDED; leave the app while the microphone is on.
+        app.buttons["draft-mic"].tap()
+        XCTAssertTrue(waitFor(timeout: 10) { transcript.label.contains("200 такси") }, transcript.label)
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.activate()
+        XCTAssertTrue(draft.waitForExistence(timeout: 5), "recording stopped by leaving the app, text kept as a draft")
+        XCTAssertTrue(draftText().contains("развлечения") && draftText().contains("200 такси"), draftText())
+
+        // 4. Restart the app: the draft is restored.
+        app.terminate()
+        let again = XCUIApplication()
+        again.launchArguments = ["-uiTestAI", "-uiTestAIOffline", "-AppleLanguages", "(ru)", "-AppleLocale", "ru_UA"]
+        again.launch()
+        let draft2 = again.descendants(matching: .any)["voice-draft"]
+        XCTAssertTrue(draft2.waitForExistence(timeout: 10), "draft restored after a restart")
+        XCTAssertTrue(((draft2.value as? String) ?? "").contains("200 такси"))
+
+        // 5. Third phrase, then send everything at once — the connection is down.
+        again.buttons["draft-mic"].tap()
+        let transcript2 = again.staticTexts["voice-transcript"]
+        XCTAssertTrue(waitFor(timeout: 10) { transcript2.label.contains("15 тысяч") }, transcript2.label)
+        shot("19-draft-three-phrases")
+        again.buttons["voice-send"].tap()
+        let retry = again.buttons["voice-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10), "an error, not «Добавлено»")
+        XCTAssertFalse(again.staticTexts["saved-title"].exists)
+        let rows2 = again.descendants(matching: .any).matching(identifier: "tx-row")
+        XCTAssertEqual(rows2.count, 0, "nothing saved while offline")
+        shot("20-offline-error")
+
+        // 6. Retry: all seven saved at once, shown immediately, the draft is gone.
+        retry.tap()
+        let title = again.staticTexts["saved-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertTrue(title.label.contains("7"), title.label)
+        XCTAssertTrue(waitFor { rows2.count == 7 }, "rows: \(rows2.count)")
+        shot("21-saved-after-retry")
+        again.buttons["voice-close"].tap()
+        XCTAssertTrue(again.buttons["ai-button"].waitForExistence(timeout: 5))
+        XCTAssertFalse(again.descendants(matching: .any)["ai-draft-badge"].exists, "draft cleared after the save")
+
+        // 7. Restart: no draft comes back, the seven operations stay, no duplicates.
+        again.terminate()
+        again.launch()
+        XCTAssertTrue(again.buttons["ai-button"].waitForExistence(timeout: 10))
+        XCTAssertFalse(again.descendants(matching: .any)["voice-draft"].exists)
+        XCTAssertTrue(waitFor { rows2.count == 7 }, "rows after restart: \(rows2.count)")
     }
 
     func waitFor(timeout: TimeInterval = 5, _ cond: () -> Bool) -> Bool {

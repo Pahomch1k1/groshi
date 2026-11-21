@@ -71,6 +71,15 @@ public enum AssistantEvent: Hashable {
         case .pending: return true
         }
     }
+
+    /// Data was really written or removed (a pending draft or a discarded one is not).
+    public var isRealChange: Bool {
+        switch self {
+        case .applied, .saved, .undone: return true
+        case .resolved(_, let confirmed): return confirmed
+        case .pending: return false
+        }
+    }
 }
 
 /// Bridge to the app's store (which keeps undo history and persists).
@@ -112,14 +121,46 @@ public final class AssistantEngine {
         public var events: [AssistantEvent]
         /// The connection dropped after changes were already made; they are kept and must not be repeated.
         public var interrupted = false
+        /// Operations of the latest add_transactions call that were NOT saved (reasons, one per item).
+        public var notSaved: [String] = []
+        /// This submission (request id) had already been saved earlier: nothing was sent to the model.
+        public var alreadySaved = false
+        /// The model said something was saved, but nothing was: the reply was dropped, show an error.
+        public var unverifiedClaim = false
+
+        /// Something was really written (pending drafts are not).
+        public var savedSomething: Bool { events.contains { $0.isRealChange } }
+        public var savedTransactions: [Txn] {
+            events.flatMap { e -> [Txn] in if case .saved(let t) = e { return t }; return [] }
+        }
     }
 
-    public func send(_ text: String) async throws -> TurnResult {
+    /// Request id of the submission being processed: stamped on every operation it saves.
+    public private(set) var requestID: String?
+    /// Reasons for items of the latest add_transactions call that could not be saved.
+    var lastNotSaved: [String] = []
+
+    /// Sends one user message. `requestID` identifies one submission (a voice draft): sending the same
+    /// one again — after a dropped connection, a crash or a double tap — never saves its operations twice.
+    public func send(_ text: String, requestID: String? = nil) async throws -> TurnResult {
+        if let rid = requestID {
+            let done = host.data().transactions.filter { $0.requestID == rid }
+            if !done.isEmpty {
+                return TurnResult(reply: "", events: [.saved(done)], alreadySaved: true)
+            }
+        }
+        self.requestID = requestID
+        defer { self.requestID = nil }
+        lastNotSaved = []
         trimHistory()
         let turnStart = history.count
+        let pendingBefore = pending
         history.append(.user(text))
         var events: [AssistantEvent] = []
         var executedSignatures = Set<String>()
+        var checkedClaim = false
+        // A question about past data ("сколько я добавил…") may use the same words: no check then.
+        var answeredFromData = false
         for _ in 0..<maxRounds {
             let system = ChatMessage.system(AssistantTools.systemPrompt(data: host.data(), now: now(), calendar: calendar,
                                                                         replyLanguage: replyLanguage, pending: pendingDescription()))
@@ -129,16 +170,34 @@ public final class AssistantEngine {
             } catch {
                 // Never leave a half-finished turn (tool calls without answers) in the history.
                 history.removeSubrange(turnStart...)
-                guard events.contains(where: { $0.isChange }) else { throw error }
+                guard events.contains(where: { $0.isRealChange }) else {
+                    pending = pendingBefore // a draft made in this failed turn was never shown
+                    throw error
+                }
                 // Changes were already made: keep them and record that in the history, so a retry
                 // of the same command is recognised instead of being executed twice.
                 history.append(.user(text))
                 history.append(.assistant("[Done before the connection dropped: " + changeLog(events) + ". Do not repeat these changes.]"))
-                return TurnResult(reply: "", events: events, interrupted: true)
+                return TurnResult(reply: "", events: events, interrupted: true, notSaved: lastNotSaved)
             }
             history.append(msg)
             guard let calls = msg.tool_calls, !calls.isEmpty else {
-                return TurnResult(reply: msg.content ?? "", events: events)
+                let reply = msg.content ?? ""
+                let saved = events.contains { $0.isRealChange }
+                if !saved && !answeredFromData && Self.claimsSaved(reply) {
+                    if !checkedClaim {
+                        // The model says "added" but no tool saved anything: tell it once and let it act.
+                        checkedClaim = true
+                        var note = "[App check: NOTHING was saved in this turn"
+                        if !lastNotSaved.isEmpty { note += " (" + lastNotSaved.joined(separator: "; ") + ")" }
+                        if pending != nil { note += "; the operations wait in PENDING for the user's yes/no" }
+                        note += ". Do not say that anything was added or saved. Call add_transactions now with all the operations, or ask the user only for what is missing.]"
+                        history.append(.system(note))
+                        continue
+                    }
+                    return TurnResult(reply: "", events: events, notSaved: lastNotSaved, unverifiedClaim: true)
+                }
+                return TurnResult(reply: reply, events: events, notSaved: lastNotSaved)
             }
             for call in calls {
                 let signature = call.function.name + "|" + call.function.arguments
@@ -148,12 +207,26 @@ public final class AssistantEngine {
                 } else {
                     executedSignatures.insert(signature)
                     let args = JSON.parse(call.function.arguments) ?? [:]
+                    if ["find_transactions", "summarize", "wallet_balances"].contains(call.function.name) { answeredFromData = true }
                     result = execute(call.function.name, args, events: &events)
                 }
                 history.append(.tool(call.id, result.serialized()))
             }
         }
-        return TurnResult(reply: "…", events: events)
+        return TurnResult(reply: "…", events: events, notSaved: lastNotSaved)
+    }
+
+    /// "Добавлено", "сохранил", "записав", "saved"… — a statement that operations were recorded.
+    /// Negations ("ничего не сохранено", "не додано") are not claims.
+    public static func claimsSaved(_ reply: String) -> Bool {
+        let s = " " + reply.lowercased().replacingOccurrences(of: "ё", with: "е") + " "
+        let negations = ["не добав", "не сохран", "не запис", "не внес", "не внёс", "не додан", "не додав", "не збереж",
+                         "не зберіг", "не занес", "ничего", "нічого", "nothing", "not saved", "not added", "wasn't", "were not", "was not"]
+        if negations.contains(where: { s.contains($0) }) { return false }
+        let claims = ["добавлен", "добавил", "добавила", "сохранен", "сохранил", "сохранила", "записал", "записан", "записала",
+                      "внесен", "внес ", "внесла", "занес", "додано", "додав", "додала", "збережено", "зберіг", "зберегла",
+                      "записав", "записала", "записано", "внесено", "saved", "added", "recorded", "logged"]
+        return claims.contains { s.contains($0) }
     }
 
     /// Keep the last ~24 messages, cutting only at a user message so tool call/result pairs stay intact.
@@ -465,24 +538,83 @@ public final class AssistantEngine {
 
     /// Operations with all required data are saved at once, however many there are (one undo removes
     /// the whole command). Only a likely duplicate of something just saved waits for a "да".
+    ///
+    /// Each item stands on its own: complete items are saved even when another item lacks its date or
+    /// category, and the result names exactly the items that were not saved, so the model asks only
+    /// about those. Items already saved by the same submission (request id) are never saved again.
     func addTransactions(_ a: JSON, _ data: AppData, _ events: inout [AssistantEvent]) throws -> JSON {
         guard let items = a["items"]?.array, !items.isEmpty else { return error("items required") }
-        let txs = try parseItems(items, data)
-        let dupes = txs.contains { !DuplicateCheck.suspects(for: $0, in: data, calendar: calendar, now: now()).isEmpty }
-        if dupes { return try setDraft(txs, data, &events) }
-        try host.apply(.addTransactions(txs), txs.count == 1 ? "Added: " + describe(txs[0], data) : "Added \(txs.count)")
-        events.append(.saved(txs))
+        var parsed: [Txn] = []
+        var failed: [String] = []
+        for (i, item) in items.enumerated() {
+            do { parsed += try parseItems([item], data, numberOffset: i) } catch let e as ToolError {
+                failed.append(e.message)
+            } catch {
+                failed.append("item \(i + 1): \(error)")
+            }
+        }
+        lastNotSaved = failed
+        guard !parsed.isEmpty else {
+            return ["status": "error", "saved_count": 0, "not_saved": .array(failed.map { .string($0) }),
+                    "message": .string("Nothing was recorded. " + failed.joined(separator: " "))]
+        }
+        // The same submission sent again (a retry, or the model repeating the call): skip what it already saved.
+        var repeated: [Txn] = []
+        if let rid = requestID {
+            var mine = data.transactions.filter { $0.requestID == rid }
+            parsed = parsed.filter { t in
+                guard let j = mine.firstIndex(where: { Self.sameOperation($0, t, calendar) }) else { return true }
+                repeated.append(mine.remove(at: j))
+                return false
+            }
+            for i in parsed.indices { parsed[i].requestID = rid }
+        }
+        let isSuspect = { (t: Txn) in !DuplicateCheck.suspects(for: t, in: data, calendar: self.calendar, now: self.now()).isEmpty }
+        let fresh = parsed.filter { !isSuspect($0) }
+        let suspects = parsed.filter(isSuspect)
+        // Only likely repeats of something just saved: the whole command waits for "да" (as before).
+        if fresh.isEmpty && failed.isEmpty && repeated.isEmpty { return try setDraft(suspects, data, &events) }
+        if !fresh.isEmpty {
+            try host.apply(.addTransactions(fresh), fresh.count == 1 ? "Added: " + describe(fresh[0], data) : "Added \(fresh.count)")
+            events.append(.saved(fresh))
+        }
         let base = data.settings.baseCurrency
-        let tot = Analytics.totals(txs, data: data)
-        return [
-            "status": "saved",
-            "count": .number(Double(txs.count)),
+        let tot = Analytics.totals(fresh, data: data)
+        var r: [String: JSON] = [
+            "status": .string(failed.isEmpty && suspects.isEmpty ? (fresh.isEmpty ? "already_saved" : "saved")
+                              : (fresh.isEmpty ? "not_saved_yet" : "partially_saved")),
+            "saved_count": .number(Double(fresh.count)),
             "total_expense": .string(MoneyMath.plainString(tot.expense, currency: base) + " " + base),
             "total_income": .string(MoneyMath.plainString(tot.income, currency: base) + " " + base),
             // ids let the model correct a saved operation right away ("пиццу не 450, а 500").
-            "items": .array(txs.map { .string(shortID($0.id) + " " + describe($0, data)) }),
-            "next": "Already saved and shown on screen; reply with one short sentence, do not ask to confirm."
+            "items": .array(fresh.map { .string(shortID($0.id) + " " + describe($0, data)) })
         ]
+        var next: [String] = []
+        if !fresh.isEmpty { next.append("The saved items are already shown on screen; do not add them again.") }
+        if !repeated.isEmpty {
+            r["already_saved_earlier"] = .array(repeated.map { .string(shortID($0.id) + " " + describe($0, data)) })
+            next.append("\(repeated.count) item(s) were already saved by this same command earlier and were skipped.")
+        }
+        if !failed.isEmpty {
+            r["not_saved"] = .array(failed.map { .string($0) })
+            next.append("\(failed.count) item(s) were NOT saved: ask in one short question only for what is missing for them; never say they were added.")
+        }
+        if !suspects.isEmpty {
+            let draft = try setDraft(suspects, data, &events)
+            r["awaiting_confirmation"] = draft["items"] ?? .array([])
+            next.append("\(suspects.count) item(s) look like a repeat of operations saved minutes ago and wait for the user's yes/no; ask whether to add them anyway.")
+        }
+        if failed.isEmpty && suspects.isEmpty {
+            next.append("Reply with one short sentence, do not ask to confirm.")
+        }
+        r["next"] = .string(next.joined(separator: " "))
+        return .object(r)
+    }
+
+    /// The same operation (a repeat of one already saved by the same submission).
+    static func sameOperation(_ a: Txn, _ b: Txn, _ cal: Calendar) -> Bool {
+        a.kind == b.kind && a.amountMinor == b.amountMinor && a.currency == b.currency && a.categoryID == b.categoryID &&
+            a.walletID == b.walletID && cal.isDate(a.date, inSameDayAs: b.date)
     }
 
     /// Target index (0-based) from position / row+column / after / before, or nil if none was given.

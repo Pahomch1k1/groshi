@@ -25,7 +25,12 @@ struct GroshiApp: App {
                 .environment(\.locale, Lang.locale)
                 .id(store.data.settings.language) // rebuild all text on language change
                 .tint(Palette.accent)
-                .onChange(of: scenePhase) { _, phase in if phase == .active { store.catchUpRecurring() } }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { store.catchUpRecurring() }
+                    // iOS takes the microphone from an app that leaves the screen: stop cleanly and keep
+                    // every word heard in the draft (it is on disk already); the user continues on return.
+                    if phase == .background { Task { await assistant.appWillLeave() } }
+                }
         }
     }
 }
@@ -59,7 +64,8 @@ struct RootView: View {
                         showAdd = true
                     }
                     .accessibilityIdentifier("add-button")
-                    AIFab(recording: false) { Task { await ai.startVoice() } }
+                    // With a draft waiting, the button continues it (new speech is added to the text).
+                    AIFab(recording: false, hasDraft: ai.hasDraft) { Task { await ai.aiButton() } }
                         .accessibilityIdentifier("ai-button")
                 }
                 .padding(.trailing, 18)
