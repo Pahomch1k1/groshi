@@ -29,7 +29,7 @@ struct CategoryGrid<Trailing: View>: View {
         }
         .coordinateSpace(name: "catgrid")
         .onPreferenceChange(CategoryCellFrames.self) { frames = $0 }
-        .onChange(of: holding) { _, now in if !now { finishDrag() } }
+        .onChange(of: holding) { _, now in UITrace.log("holding \(now)"); if !now { finishDrag() } }
     }
 
     func cell(_ c: FinCategory) -> some View {
@@ -72,6 +72,7 @@ struct CategoryGrid<Trailing: View>: View {
             .onChanged { value in
                 guard case .second(true, let drag) = value else { return }
                 if dragging == nil {
+                    UITrace.log("drag start \(c.name) frames=\(frames.count) own=\(frames[c.id].map { "\($0)" } ?? "nil")")
                     order = CategoryOrder.ids(store.data, kind)
                     if let f = frames[c.id] { dragPoint = CGPoint(x: f.midX, y: f.midY) }
                     Haptics.select(enabled: store.data.settings.haptics)
@@ -81,6 +82,7 @@ struct CategoryGrid<Trailing: View>: View {
                 dragPoint = drag.location
                 if let target = frames.first(where: { $0.key != c.id && order.contains($0.key) && $0.value.contains(drag.location) })?.key,
                    let from = order.firstIndex(of: c.id), let to = order.firstIndex(of: target) {
+                    UITrace.log("drag over \(store.data.category(target)?.name ?? "?") at \(drag.location) \(from)→\(to)")
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
                         order.remove(at: from)
                         order.insert(c.id, at: to)
@@ -94,6 +96,7 @@ struct CategoryGrid<Trailing: View>: View {
     func finishDrag() {
         guard dragging != nil else { return }
         let newOrder = order
+        UITrace.log("drag end at \(dragPoint) changed=\(newOrder != CategoryOrder.ids(store.data, kind))")
         if newOrder != CategoryOrder.ids(store.data, kind) {
             _ = store.perform(.reorderCategories(kind: kind, order: newOrder), label: L("Порядок категорий"), toast: false)
         }

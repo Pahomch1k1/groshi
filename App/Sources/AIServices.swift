@@ -405,7 +405,8 @@ final class BackgroundTask {
 /// app was (the test runner cannot see inside the app).
 enum UITrace {
     static let url: URL? = {
-        guard ScriptedTransport.isOn else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-uiTestAI") || args.contains("-uiTestReset") || args.contains("-uiTestTrace") else { return nil }
         let dir = ProcessInfo.processInfo.environment["SHOTS_DIR"] ?? "/tmp/groshi-shots"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         return URL(fileURLWithPath: dir).appendingPathComponent("app-trace.txt")

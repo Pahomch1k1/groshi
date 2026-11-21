@@ -12,6 +12,14 @@ final class GroshiUITests: XCTestCase {
 
     static var shotsDir: String { ProcessInfo.processInfo.environment["SHOTS_DIR"] ?? "/tmp/groshi-shots" }
 
+    /// Any failure: a screenshot and the element tree at that moment (uploaded with the CI artifacts).
+    override func record(_ issue: XCTIssue) {
+        let test = name.components(separatedBy: " ").last?.trimmingCharacters(in: CharacterSet(charactersIn: "]")) ?? "test"
+        shot("FAIL-\(test)-line\(issue.sourceCodeContext.location?.lineNumber ?? 0)")
+        print("HIERARCHY-ON-FAILURE (\(test)):\n" + XCUIApplication().debugDescription)
+        super.record(issue)
+    }
+
     /// Screenshots go to the host filesystem (the simulator shares it) so CI can upload them.
     func shot(_ name: String) {
         let s = XCUIScreen.main.screenshot()
