@@ -92,6 +92,19 @@ struct RootView: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.selectedTab == .more)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        // Here, not in the voice panel: the panel disappears when the draft is deleted.
+        .confirmationDialog(L("Удалить черновик?"), isPresented: $ai.askDeleteDraft, titleVisibility: .visible) {
+            Button(L("Удалить черновик"), role: .destructive) {
+                // After the dialog has closed, so the panel is not removed in the middle of it.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    ai.deleteDraft()
+                }
+            }
+            Button(L("Отмена"), role: .cancel) {}
+        } message: {
+            Text(L("Продиктованный текст будет удалён, операции не сохранятся."))
+        }
         .sheet(isPresented: $showAdd) {
             AddTransactionView(editing: nil)
         }

@@ -9,7 +9,6 @@ struct VoiceDock: View {
     @Environment(Store.self) private var store
     @Environment(AssistantViewModel.self) private var ai
     @State private var editing: Txn?
-    @State private var confirmDelete = false
     @FocusState private var draftFocused: Bool
 
     var body: some View {
@@ -27,12 +26,8 @@ struct VoiceDock: View {
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .shadow(color: Color.black.opacity(0.14), radius: 18, y: 6)
         .sheet(item: $editing) { tx in AddTransactionView(editing: tx) }
-        .confirmationDialog(L("Удалить черновик?"), isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button(L("Удалить черновик"), role: .destructive) { ai.deleteDraft() }
-            Button(L("Отмена"), role: .cancel) {}
-        } message: {
-            Text(L("Продиктованный текст будет удалён, операции не сохранятся."))
-        }
+        // The "delete draft?" dialog lives in RootView: this panel disappears when the draft is
+        // deleted, and a dialog whose view vanishes while it is closing left SwiftUI half-updated.
     }
 
     // MARK: Draft
@@ -67,7 +62,7 @@ struct VoiceDock: View {
                     .accessibilityIdentifier("voice-error")
             }
             HStack(spacing: 8) {
-                Button { draftFocused = false; confirmDelete = true } label: {
+                Button { draftFocused = false; ai.askDeleteDraft = true } label: {
                     Image(systemName: "trash").font(.system(size: 15, weight: .medium))
                         .frame(width: 44, height: 42).background(Palette.bubble, in: Capsule())
                 }

@@ -39,6 +39,8 @@ final class AssistantViewModel {
     /// Message (in `messages`) holding the operations saved by the latest command.
     var lastSavedID: UUID?
     var correcting = false
+    /// The "Удалить черновик?" confirmation (shown by RootView, which never disappears).
+    var askDeleteDraft = false
     let speech = SpeechRecognizer()
     let store: Store
     @ObservationIgnored private var engine: AssistantEngine!
