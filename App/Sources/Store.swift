@@ -104,6 +104,8 @@ final class Store {
     /// not be written — then nothing changes, so a caller (the AI too) never reports an unsaved change.
     /// The screen updates in the same step: every list reads `data`.
     func apply(_ m: Mutation, label: String, undoable: Bool = true) throws {
+        // SwiftUI only reliably redraws for changes made on the main thread (the 0.4 AI bug).
+        assert(Thread.isMainThread, "Store changed off the main thread")
         var copy = data
         try m.apply(to: &copy)
         do { try fileStore.save(copy) } catch {

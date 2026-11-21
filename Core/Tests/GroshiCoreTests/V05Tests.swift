@@ -201,4 +201,21 @@ final class V05Tests: XCTestCase {
         let back = try FileStore.decoder().decode(AppData.self, from: Data(json.utf8))
         XCTAssertNil(back.transactions[0].requestID)
     }
+
+    /// The app calls the engine from the main actor: the tools (writes to the store the screen
+    /// observes) must run there too, not on a background thread.
+    @MainActor
+    func testToolsRunOnTheCallersActor() async throws {
+        var threads: [Bool] = []
+        let host = AssistantHost(data: { self.t.data }, apply: { m, label in
+            threads.append(Thread.isMainThread)
+            try self.t.host.apply(m, label)
+        }, undo: { nil })
+        let e = AssistantEngine(transport: net, host: host, calendar: cal, now: { [unowned self] in self.now })
+        net.queue = [add(fiveItems), .assistant("Добавлено 5.")]
+        let r = try await e.send("…", requestID: "req-main")
+        XCTAssertEqual(r.savedTransactions.count, 5)
+        XCTAssertEqual(threads, [true], "saved on the main thread")
+        XCTAssertTrue(Thread.isMainThread)
+    }
 }

@@ -142,7 +142,14 @@ public final class AssistantEngine {
 
     /// Sends one user message. `requestID` identifies one submission (a voice draft): sending the same
     /// one again — after a dropped connection, a crash or a double tap — never saves its operations twice.
-    public func send(_ text: String, requestID: String? = nil) async throws -> TurnResult {
+    ///
+    /// Runs on the caller's actor (`isolation`): called from the app's main actor, every tool — and so
+    /// every write to the store the screen observes — happens on the main thread. Before 0.5 this was a
+    /// plain nonisolated async function: tools ran on a background thread, the store changed off the
+    /// main thread, and SwiftUI could show saved operations late (only after another update) or leave
+    /// the panel on "Обрабатываю…".
+    public func send(_ text: String, requestID: String? = nil,
+                     isolation: isolated (any Actor)? = #isolation) async throws -> TurnResult {
         if let rid = requestID {
             let done = host.data().transactions.filter { $0.requestID == rid }
             if !done.isEmpty {
