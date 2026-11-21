@@ -39,7 +39,7 @@ final class AssistantViewModel {
     /// Message (in `messages`) holding the operations saved by the latest command.
     var lastSavedID: UUID?
     var correcting = false
-    /// The "Удалить черновик?" confirmation (shown by RootView, which never disappears).
+    /// The "Удалить черновик?" confirmation, shown inside the draft panel.
     var askDeleteDraft = false
     let speech = SpeechRecognizer()
     let store: Store
@@ -120,6 +120,7 @@ final class AssistantViewModel {
         if let context { self.context = context }
         Haptics.tap(enabled: store.data.settings.haptics)
         lastError = nil
+        askDeleteDraft = false
         if draft == nil { setDraft(VoiceDraft()) }
         recordingBase = draft?.text ?? ""
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { phase = .recording; correcting = false }
@@ -173,6 +174,7 @@ final class AssistantViewModel {
 
     /// Explicit delete of the draft (after a confirmation in the panel).
     func deleteDraft() {
+        askDeleteDraft = false
         speech.cancel()
         clearDraft()
         context = nil

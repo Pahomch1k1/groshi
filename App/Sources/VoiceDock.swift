@@ -65,6 +65,22 @@ struct VoiceDock: View {
                 Label(e, systemImage: "exclamationmark.triangle.fill").font(.footnote).foregroundStyle(Palette.expense)
                     .accessibilityIdentifier("voice-error")
             }
+            if ai.askDeleteDraft {
+                // Confirmation inside the panel (no system dialog: after one closed, the window
+                // sometimes stopped redrawing and showed a stale panel on CI).
+                Text(L("Удалить черновик?") + " " + L("Продиктованный текст будет удалён, операции не сохранятся."))
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Palette.expense)
+                HStack(spacing: 8) {
+                    bigButton(L("Отмена"), id: "draft-delete-cancel", primary: false) { ai.askDeleteDraft = false }
+                    Button { ai.deleteDraft() } label: {
+                        Text(L("Удалить черновик")).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                            .frame(maxWidth: .infinity).frame(height: 42)
+                            .background(Palette.expense, in: Capsule())
+                    }
+                    .buttonStyle(PressableStyle(scale: 0.96))
+                    .accessibilityIdentifier("draft-delete-confirm")
+                }
+            } else {
             HStack(spacing: 8) {
                 Button { draftFocused = false; ai.askDeleteDraft = true } label: {
                     Image(systemName: "trash").font(.system(size: 15, weight: .medium))
@@ -81,6 +97,7 @@ struct VoiceDock: View {
                     closeKeyboardAnd { Task { await ai.sendDraft() } }
                 }
                 .disabled(!ai.hasDraft)
+            }
             }
         }
     }

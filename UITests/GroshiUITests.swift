@@ -186,7 +186,7 @@ final class GroshiUITests: XCTestCase {
         app.buttons["voice-pause"].tap()
         XCTAssertTrue(app.buttons["draft-delete"].waitForExistence(timeout: 5))
         app.buttons["draft-delete"].tap()
-        let confirm = app.sheets.buttons["Удалить черновик"].firstMatch
+        let confirm = app.buttons["draft-delete-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         confirm.tap()
         XCTAssertTrue(aiButton.waitForExistence(timeout: 5))
