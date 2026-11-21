@@ -26,6 +26,7 @@ struct GroshiApp: App {
                 .id(store.data.settings.language) // rebuild all text on language change
                 .tint(Palette.accent)
                 .onChange(of: scenePhase) { _, phase in
+                    UITrace.log("scenePhase \(phase)")
                     if phase == .active { store.catchUpRecurring() }
                     // iOS takes the microphone from an app that leaves the screen: stop cleanly and keep
                     // every word heard in the draft (it is on disk already); the user continues on return.

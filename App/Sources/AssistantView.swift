@@ -236,6 +236,7 @@ final class AssistantViewModel {
             UITrace.log("engine.send done saved=\(r.savedTransactions.count) claim=\(r.unverifiedClaim) reply=\(r.reply.prefix(40))")
             busy = false
             handle(r.events)
+            UITrace.log("handled events=\(r.events.count) lastSaved=\(lastSavedID != nil)")
             lastNotSaved = r.notSaved.count
             if r.unverifiedClaim {
                 // The model said "added" but nothing was written: never show that as a success.
@@ -260,6 +261,7 @@ final class AssistantViewModel {
             // A clarifying question keeps it: the answer is dictated into the same draft and sent whole.
             if fromDraft && (r.savedSomething || !reply.trimmingCharacters(in: .whitespaces).hasSuffix("?")) {
                 clearDraft()
+                UITrace.log("draft cleared")
             }
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                 lastReply = reply

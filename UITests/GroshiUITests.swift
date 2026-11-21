@@ -233,11 +233,11 @@ final class GroshiUITests: XCTestCase {
         let food = app.buttons["category-Продукты"], transport = app.buttons["category-Транспорт"]
         XCTAssertTrue(food.waitForExistence(timeout: 5))
         XCTAssertLessThan(food.frame.minX, transport.frame.minX)
-        food.press(forDuration: 0.8, thenDragTo: transport)
-        sleep(1)
-        // XCUITest sometimes fails to start the long-press inside a ScrollView: try once more, slower.
-        if food.frame.minX < transport.frame.minX {
-            food.press(forDuration: 1.5, thenDragTo: transport)
+        // Like a finger: hold, move slowly, hold over the target, release. XCUITest's default fast
+        // drag inside a ScrollView sometimes never starts the long-press; up to three attempts.
+        for attempt in 1...3 where food.frame.minX < transport.frame.minX {
+            food.press(forDuration: 0.6 + 0.4 * Double(attempt), thenDragTo: transport,
+                       withVelocity: .slow, thenHoldForDuration: 0.5)
             sleep(1)
         }
         XCTAssertGreaterThan(food.frame.minX, transport.frame.minX, "Продукты moved after Транспорт")
