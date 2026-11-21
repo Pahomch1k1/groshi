@@ -56,33 +56,42 @@ struct RootView: View {
             tab(.overview) { OverviewView() }
             tab(.more) { MoreView() }
         }
+        // The buttons and the AI panel stay in the view tree and only fade (like the tabs): inserting
+        // and removing them with transitions while a dialog closed or the panel changed phase sometimes
+        // left SwiftUI showing a stale state (no AI button after deleting a draft).
         .overlay(alignment: .bottomTrailing) {
             // Two independent buttons: manual entry and the AI voice command (one tap starts recording).
-            if store.selectedTab != .more && ai.phase == .idle {
-                VStack(spacing: 12) {
-                    FAB(systemImage: "plus") {
-                        Haptics.tap(enabled: store.data.settings.haptics)
-                        showAdd = true
-                    }
-                    .accessibilityIdentifier("add-button")
-                    // With a draft waiting, the button continues it (new speech is added to the text).
-                    AIFab(recording: false, hasDraft: ai.hasDraft) { Task { await ai.aiButton() } }
-                        .accessibilityIdentifier("ai-button")
+            let fabs = store.selectedTab != .more && ai.phase == .idle
+            VStack(spacing: 12) {
+                FAB(systemImage: "plus") {
+                    Haptics.tap(enabled: store.data.settings.haptics)
+                    showAdd = true
                 }
-                .padding(.trailing, 18)
-                // Rises above the "Added / Undo" toast so it is never covered by it.
-                .padding(.bottom, store.toast == nil ? 72 : 128)
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.toast == nil)
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                .accessibilityIdentifier("add-button")
+                // With a draft waiting, the button continues it (new speech is added to the text).
+                AIFab(recording: false, hasDraft: ai.hasDraft) { Task { await ai.aiButton() } }
+                    .accessibilityIdentifier("ai-button")
             }
+            .padding(.trailing, 18)
+            // Rises above the "Added / Undo" toast so it is never covered by it.
+            .padding(.bottom, store.toast == nil ? 72 : 128)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.toast == nil)
+            .scaleEffect(fabs ? 1 : 0.6)
+            .opacity(fabs ? 1 : 0)
+            .allowsHitTesting(fabs)
+            .accessibilityHidden(!fabs)
+            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: fabs)
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
-                if ai.phase != .idle {
-                    VoiceDock()
-                        .padding(.horizontal, 12)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                let dock = ai.phase != .idle
+                VoiceDock()
+                    .padding(.horizontal, 12)
+                    .frame(height: dock ? nil : 0, alignment: .top)
+                    .opacity(dock ? 1 : 0)
+                    .allowsHitTesting(dock)
+                    .accessibilityHidden(!dock)
+                    .animation(.snappy, value: dock)
                 if let t = store.toast {
                     ToastView(toast: t).transition(.move(edge: .bottom).combined(with: .opacity))
                 }
