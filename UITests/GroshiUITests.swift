@@ -7,7 +7,10 @@ final class GroshiUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-uiTestReset", "-AppleLanguages", "(ru)", "-AppleLocale", "ru_UA"]
+        app.launchEnvironment["SHOTS_DIR"] = Self.shotsDir
     }
+
+    static var shotsDir: String { ProcessInfo.processInfo.environment["SHOTS_DIR"] ?? "/tmp/groshi-shots" }
 
     /// Screenshots go to the host filesystem (the simulator shares it) so CI can upload them.
     func shot(_ name: String) {
@@ -299,6 +302,7 @@ final class GroshiUITests: XCTestCase {
         // 4. Restart the app: the draft is restored.
         app.terminate()
         let again = XCUIApplication()
+        again.launchEnvironment["SHOTS_DIR"] = Self.shotsDir
         again.launchArguments = ["-uiTestAI", "-uiTestAIOffline", "-AppleLanguages", "(ru)", "-AppleLocale", "ru_UA"]
         again.launch()
         let draft2 = again.descendants(matching: .any)["voice-draft"]

@@ -358,6 +358,8 @@ final class ScriptedTransport: LLMTransport {
     private var failNext = ProcessInfo.processInfo.arguments.contains("-uiTestAIOffline")
 
     func complete(messages: [ChatMessage], tools: [JSON]) async throws -> ChatMessage {
+        UITrace.log("transport start messages=\(messages.count) last=\(messages.last?.role ?? "-")")
+        defer { UITrace.log("transport end") }
         try await Task.sleep(for: .milliseconds(300))
         if failNext {
             failNext = false
@@ -396,5 +398,26 @@ final class BackgroundTask {
         guard id != .invalid else { return }
         UIApplication.shared.endBackgroundTask(id)
         id = .invalid
+    }
+}
+
+/// UI tests only (-uiTestAI): a step trace next to the screenshots, so a CI failure shows where the
+/// app was (the test runner cannot see inside the app).
+enum UITrace {
+    static let url: URL? = {
+        guard ScriptedTransport.isOn else { return nil }
+        let dir = ProcessInfo.processInfo.environment["SHOTS_DIR"] ?? "/tmp/groshi-shots"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return URL(fileURLWithPath: dir).appendingPathComponent("app-trace.txt")
+    }()
+
+    static func log(_ s: String) {
+        guard let url else { return }
+        let line = String(format: "%.3f", Date().timeIntervalSince1970) + (Thread.isMainThread ? " [main] " : " [bg] ") + s + "\n"
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+        } else {
+            try? Data(line.utf8).write(to: url)
+        }
     }
 }

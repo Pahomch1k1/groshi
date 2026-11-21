@@ -29,7 +29,7 @@ final class AssistantViewModel {
     var context: String?
     /// The action waiting for "да" or the button (a possible duplicate, a mass change, a deletion).
     var pending: PendingAction?
-    var phase: Phase = .idle
+    var phase: Phase = .idle { didSet { if phase != oldValue { UITrace.log("phase \(oldValue) → \(phase)") } } }
     /// Result of the latest command for the voice panel.
     var lastReply = ""
     var lastError: String?
@@ -143,7 +143,9 @@ final class AssistantViewModel {
     /// the screen: iOS does not let a non-background app keep the microphone).
     func pauseVoice() async {
         guard speech.isRecording || phase == .recording else { return }
+        UITrace.log("pauseVoice start phase=\(phase)")
         let text = await speech.stop()
+        UITrace.log("pauseVoice stopped text=\(text.count) chars")
         var d = draft ?? VoiceDraft()
         d.text = VoiceDraft.joined(recordingBase, text)
         d.updatedAt = Date()
@@ -188,8 +190,9 @@ final class AssistantViewModel {
 
     /// "Отправить": the whole draft in one request.
     func sendDraft() async {
+        UITrace.log("sendDraft recording=\(speech.isRecording) phase=\(phase)")
         if speech.isRecording { await pauseVoice() }
-        guard let d = draft, !d.isEmpty else { return }
+        guard let d = draft, !d.isEmpty else { UITrace.log("sendDraft: no draft"); return }
         await send(d.text, requestID: d.requestID)
     }
 
@@ -207,7 +210,7 @@ final class AssistantViewModel {
     /// so the operations can never be saved twice.
     func send(_ textOverride: String? = nil, requestID: String? = nil) async {
         let text = (textOverride ?? input).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !busy else { return }
+        guard !text.isEmpty, !busy else { UITrace.log("send skipped empty=\(text.isEmpty) busy=\(busy)"); return }
         let fromDraft = requestID != nil && requestID == draft?.requestID
         let rid = requestID ?? UUID().uuidString
         if textOverride == nil { input = "" }
@@ -228,7 +231,9 @@ final class AssistantViewModel {
         let bg = BackgroundTask("ai-send")
         defer { bg.end() }
         do {
+            UITrace.log("engine.send start")
             let r = try await engine.send(prompt, requestID: rid)
+            UITrace.log("engine.send done saved=\(r.savedTransactions.count) claim=\(r.unverifiedClaim) reply=\(r.reply.prefix(40))")
             busy = false
             handle(r.events)
             lastNotSaved = r.notSaved.count
@@ -261,7 +266,9 @@ final class AssistantViewModel {
                 if !reply.isEmpty { messages.append(Message(role: .assistant, text: reply)) }
                 phase = .result
             }
+            UITrace.log("send finished phase=\(phase) lastSaved=\(lastSavedID != nil) draft=\(hasDraft)")
         } catch {
+            UITrace.log("send error \(error)")
             busy = false
             let e = Self.describe(error) + (fromDraft ? " " + L("Текст сохранён в черновике.") : "")
             withAnimation {
